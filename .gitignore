@@ -1,2 +1,5 @@
 # Nix package build
 /result
+
+# Miscellaneous
+.DS_Store

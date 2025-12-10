@@ -3,6 +3,8 @@
 }:
 
 let
+  releaseBuild = cmakeBuildType == "Release" || cmakeBuildType == "RelWithDebInfo";
+
   mkPackageBase = pkgs: (
     llvmPackages.overrideScope (tpkgs: tpkgsOld: {
       libllvm = tpkgsOld.libllvm.overrideAttrs (attrs: {
@@ -17,7 +19,7 @@ let
           # Need the following to enable exceptions
           "-DLLVM_ENABLE_EH=ON"
           # Assertions are very useful for debugging
-          "-DLLVM_ENABLE_ASSERTIONS=ON"
+          "-DLLVM_ENABLE_ASSERTIONS=${if releaseBuild then "OFF" else "ON"}"
           # Enable Z3 Solver for SMTSolver usage
           "-DLLVM_ENABLE_Z3_SOLVER=ON"
         ];
@@ -25,7 +27,7 @@ let
         # Skip tests since they take a long time to build and run
         doCheck = false;
 
-        postInstall = pkgs.lib.optionalString (cmakeBuildType != "Release") ''
+        postInstall = pkgs.lib.optionalString (!releaseBuild) ''
           ln -s $dev/lib/cmake/llvm/LLVMExports-${pkgs.lib.toLower cmakeBuildType}.cmake $dev/lib/cmake/llvm/LLVMExports-release.cmake
         '' + attrs.postInstall;
       });

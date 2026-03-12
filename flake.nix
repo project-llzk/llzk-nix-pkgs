@@ -8,11 +8,11 @@
     overlays.default = final: prev: {
 
       llzk-llvmPackages = (import ./packages/llzk_llvm/default.nix {
-        llvmPackages = final.llvmPackages_20;
+        llvmPackages = final.llvmPackages_21;
       }) final;
 
       llzk-llvmPackages-debug = (import ./packages/llzk_llvm/default.nix {
-        llvmPackages = final.llvmPackages_20;
+        llvmPackages = final.llvmPackages_21;
         cmakeBuildType = "Debug";
       }) final;
 

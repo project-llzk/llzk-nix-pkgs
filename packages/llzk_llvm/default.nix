@@ -23,7 +23,7 @@ let
           # Enable Z3 Solver for SMTSolver usage
           "-DLLVM_ENABLE_Z3_SOLVER=ON"
         ];
-        propagatedBuildInputs = attrs.propagatedBuildInputs ++ [llvmPackages.libcxx pkgs.z3];
+        propagatedBuildInputs = attrs.propagatedBuildInputs ++ [pkgs.z3];
         # Skip tests since they take a long time to build and run
         doCheck = false;
 

@@ -99,8 +99,9 @@ stdenv.mkDerivation rec {
   ];
 
   patches = [
+    # MLIR's custom install rules otherwise hard-code `lib`, bypassing the CMake
+    # hook's CMAKE_INSTALL_LIBDIR and leaving the declared `lib` output empty.
     ./gnu-install-dirs.patch
-    ./tablegen-deps.patch
   ];
 
   outputs = [ "out" "lib" "dev" ] ++ lib.optionals enablePythonBindings [ "python" ];
@@ -109,9 +110,9 @@ stdenv.mkDerivation rec {
     # The generated MLIRConfig.cmake assumes the dev binaries are on PATH,
     # so rewrite them to be in the nix store.
     substituteInPlace "$dev"/lib/cmake/mlir/MLIRConfig.cmake \
-      --replace '"mlir-tblgen"' \""$out"/bin/mlir-tblgen\" \
-      --replace '"mlir-src-sharder"' \""$out"/bin/mlir-src-sharder\" \
-      --replace '"mlir-pdll"' \""$out"/bin/mlir-pdll\"
+      --replace-fail '"mlir-tblgen"' \""$out"/bin/mlir-tblgen\" \
+      --replace-fail '"mlir-src-sharder"' \""$out"/bin/mlir-src-sharder\" \
+      --replace-fail '"mlir-pdll"' \""$out"/bin/mlir-pdll\"
 
     ${lib.strings.optionalString enablePythonBindings ''
     # move mlir source code

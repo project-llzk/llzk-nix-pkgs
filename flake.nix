@@ -25,6 +25,14 @@
         inherit system;
         overlays = [ self.overlays.default ];
       };
+      mkLlvmConfigCheck =
+        llvm_pkg:
+        pkgs.runCommand "llvm-config-${pkgs.lib.toLower llvm_pkg.cmakeBuildType}" {
+          nativeBuildInputs = [ llvm_pkg.dev ];
+        } ''
+          llvm-config --version
+          touch "$out"
+        '';
     in
     {
       packages = flake-utils.lib.flattenTree {
@@ -37,6 +45,8 @@
       formatter = pkgs.nixpkgs-fmt;
 
       checks = {
+        llvm-config-release = mkLlvmConfigCheck pkgs.llzk-llvmPackages.libllvm;
+        llvm-config-debug = mkLlvmConfigCheck pkgs.llzk-llvmPackages-debug.libllvm;
         using-mlir-release = pkgs.callPackage ./examples/using-mlir {
           mlir_pkg = pkgs.mlir;
         };

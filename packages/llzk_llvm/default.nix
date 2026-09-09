@@ -32,6 +32,15 @@ let
         '' + attrs.postInstall;
       });
 
+      # Downstream users accessing devtools like `llzk-llvmPackages.clang-tools` end up requiring this derivation
+      # as well and a test currently fails on Darwin systems due to a `codesign` setup issue in upstream nixpkgs.
+      llvm = tpkgsOld.llvm.overrideAttrs (attrs: {
+        cmakeFlags = attrs.cmakeFlags ++ [
+          "-DLLVM_INCLUDE_TESTS=OFF"
+        ];
+        doCheck = false;
+      });
+
       mlir = pkgs.callPackage ./mlir/default.nix {
         inherit cmakeBuildType;
         inherit (tpkgs.libllvm) monorepoSrc version;

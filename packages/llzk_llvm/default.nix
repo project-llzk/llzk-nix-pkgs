@@ -23,7 +23,7 @@ let
           # Enable Z3 Solver for SMTSolver usage
           "-DLLVM_ENABLE_Z3_SOLVER=ON"
         ];
-        propagatedBuildInputs = attrs.propagatedBuildInputs ++ [llvmPackages.libcxx pkgs.z3];
+        propagatedBuildInputs = attrs.propagatedBuildInputs ++ [pkgs.z3];
         # Skip tests since they take a long time to build and run
         doCheck = false;
 
@@ -31,6 +31,23 @@ let
           ln -s $dev/lib/cmake/llvm/LLVMExports-${pkgs.lib.toLower cmakeBuildType}.cmake $dev/lib/cmake/llvm/LLVMExports-release.cmake
         '' + attrs.postInstall;
       });
+
+      clang-tools = tpkgsOld.clang-tools.override (
+        {
+          # clangd, clang-tidy, clang-format, etc. from the LLZK-scoped libclang.
+          clang-unwrapped = tpkgs.clang-unwrapped;
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          # Supplies Nix include-path metadata without pulling Compiler-RT that
+          # builds stdenv LLVM which has a test failure on Darwin platforms.
+          clang = pkgs.wrapCCWith {
+            cc = tpkgs.clang-unwrapped;
+            libcxx = pkgs.darwin.libcxx;
+            bintools = tpkgs.bintools;
+            extraPackages = [ ];
+          };
+        }
+      );
 
       mlir = pkgs.callPackage ./mlir/default.nix {
         inherit cmakeBuildType;

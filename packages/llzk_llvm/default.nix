@@ -32,6 +32,23 @@ let
         '' + attrs.postInstall;
       });
 
+      clang-tools = tpkgsOld.clang-tools.override (
+        {
+          # clangd, clang-tidy, clang-format, etc. from the LLZK-scoped libclang.
+          clang-unwrapped = tpkgs.clang-unwrapped;
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          # Supplies Nix include-path metadata without pulling Compiler-RT that
+          # builds stdenv LLVM which has a test failure on Darwin platforms.
+          clang = pkgs.wrapCCWith {
+            cc = tpkgs.clang-unwrapped;
+            libcxx = pkgs.darwin.libcxx;
+            bintools = tpkgs.bintools;
+            extraPackages = [ ];
+          };
+        }
+      );
+
       mlir = pkgs.callPackage ./mlir/default.nix {
         inherit cmakeBuildType;
         inherit (tpkgs.libllvm) monorepoSrc version;

@@ -99,6 +99,9 @@ stdenv.mkDerivation rec {
   ];
 
   patches = [
+    # https://github.com/llvm/llvm-project/pull/222690
+    ./fix-diagnostics-verifier.patch
+
     # MLIR's custom install rules otherwise hard-code `lib`, bypassing the CMake
     # hook's CMAKE_INSTALL_LIBDIR and leaving the declared `lib` output empty.
     ./gnu-install-dirs.patch

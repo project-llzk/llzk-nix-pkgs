@@ -27,12 +27,6 @@ let
         # Skip tests since they take a long time to build and run
         doCheck = false;
 
-        # Backport `https://github.com/NixOS/nixpkgs/pull/552246` for llvmPackages_23. The
-        # dsymutil test signs a bundle, which the Darwin sigtool wrapper cannot support yet.
-        postPatch = attrs.postPatch + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
-          rm test/tools/dsymutil/codesign.test
-        '';
-
         postInstall = pkgs.lib.optionalString (!releaseBuild) ''
           ln -s $dev/lib/cmake/llvm/LLVMExports-${pkgs.lib.toLower cmakeBuildType}.cmake $dev/lib/cmake/llvm/LLVMExports-release.cmake
         '' + attrs.postInstall;

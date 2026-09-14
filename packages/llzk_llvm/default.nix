@@ -39,7 +39,8 @@ let
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
           # Supplies Nix include-path metadata without pulling Compiler-RT that
-          # builds stdenv LLVM which has a test failure on Darwin platforms.
+          # builds stdenv LLVM which has a test failure on Darwin platforms
+          # (should be fixed by https://github.com/NixOS/nixpkgs/pull/552246).
           clang = pkgs.wrapCCWith {
             cc = tpkgs.clang-unwrapped;
             libcxx = pkgs.darwin.libcxx;

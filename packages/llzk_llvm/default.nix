@@ -24,6 +24,10 @@ let
           "-DLLVM_ENABLE_Z3_SOLVER=ON"
         ];
         propagatedBuildInputs = attrs.propagatedBuildInputs ++ [pkgs.z3];
+        patches = attrs.patches ++ [
+          # Pending https://github.com/llvm/llvm-project/commit/1d3ea0f50c4bcfababe7929c913df500723dcf2f
+          ./initialize-hashing-buffer.patch
+        ];
         # Skip tests since they take a long time to build and run
         doCheck = false;
 

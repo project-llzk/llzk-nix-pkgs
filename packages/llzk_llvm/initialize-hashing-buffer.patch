@@ -1,0 +1,26 @@
+From 1d3ea0f50c4bcfababe7929c913df500723dcf2f Mon Sep 17 00:00:00 2001
+From: Arun Thangamani <arun.thangamani@intel.com>
+Date: Tue, 4 Aug 2026 05:42:54 +0530
+Subject: [PATCH] [ADT] Fix - gcc warning: buf may be used uninitialized
+ [-Werror=maybe-uninitialized] (#213578)
+
+When compiled with `gcc`, the uninitialized `buf` triggers a warning.
+Initialize it to eliminate the warning.
+
+---
+ include/llvm/ADT/Hashing.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/llvm/ADT/Hashing.h b/include/llvm/ADT/Hashing.h
+index bb965bea86d0c..b05598486abc7 100644
+--- a/include/llvm/ADT/Hashing.h
++++ b/include/llvm/ADT/Hashing.h
+@@ -306,7 +306,7 @@ template <typename... Ts> hash_code hash_combine(const Ts &...args) {
+   constexpr size_t Total = hashing::detail::total_hashable_size<Ts...>();
+   // Round up so `data()` is non-null when Total == 0; combine_bytes won't
+   // read the buffer in that case (len=0 short-circuits in xxh3_64bits).
+-  std::array<char, std::max<size_t>(1, Total)> buf;
++  std::array<char, std::max<size_t>(1, Total)> buf{};
+   [[maybe_unused]] size_t off = 0;
+   (hashing::detail::store_hashable_data(buf.data(), off, args), ...);
+   return hashing::detail::combine_bytes(buf.data(), Total);

@@ -23,13 +23,46 @@ let
           # Enable Z3 Solver for SMTSolver usage
           "-DLLVM_ENABLE_Z3_SOLVER=ON"
         ];
-        propagatedBuildInputs = attrs.propagatedBuildInputs ++ [llvmPackages.libcxx pkgs.z3];
+        propagatedBuildInputs = attrs.propagatedBuildInputs ++ [pkgs.z3];
+        patches = attrs.patches ++ [
+          # Pending https://github.com/llvm/llvm-project/commit/1d3ea0f50c4bcfababe7929c913df500723dcf2f
+          ./initialize-hashing-buffer.patch
+        ];
         # Skip tests since they take a long time to build and run
         doCheck = false;
 
         postInstall = pkgs.lib.optionalString (!releaseBuild) ''
           ln -s $dev/lib/cmake/llvm/LLVMExports-${pkgs.lib.toLower cmakeBuildType}.cmake $dev/lib/cmake/llvm/LLVMExports-release.cmake
         '' + attrs.postInstall;
+      });
+
+      clang-tools = (tpkgsOld.clang-tools.override (
+        {
+          # clangd, clang-tidy, clang-format, etc. from the LLZK-scoped libclang.
+          clang-unwrapped = tpkgs.clang-unwrapped;
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          # Supplies Nix include-path metadata without pulling Compiler-RT that
+          # builds stdenv LLVM which has a test failure on Darwin platforms
+          # (should be fixed by https://github.com/NixOS/nixpkgs/pull/552246).
+          clang = pkgs.wrapCCWith {
+            cc = tpkgs.clang-unwrapped;
+            libcxx = pkgs.darwin.libcxx;
+            bintools = tpkgs.bintools;
+            extraPackages = [ ];
+          };
+        }
+      )).overrideAttrs (old: {
+        # The upstream wrappers use Bash syntax but declare /bin/sh, which is
+        # dash on Linux. Nixpkgs generates a separate wrapper for each tool.
+        postInstall = (old.postInstall or "") + ''
+          for tool in "$out"/bin/clang-* "$out"/bin/clangd; do
+            if [ -f "$tool" ] && grep -qx '#!/bin/sh' "$tool"; then
+              substituteInPlace "$tool" \
+                --replace-fail '#!/bin/sh' '#!${pkgs.bash}/bin/bash'
+            fi
+          done
+        '';
       });
 
       mlir = pkgs.callPackage ./mlir/default.nix {

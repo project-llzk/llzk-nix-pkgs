@@ -36,7 +36,7 @@ let
         '' + attrs.postInstall;
       });
 
-      clang-tools = tpkgsOld.clang-tools.override (
+      clang-tools = (tpkgsOld.clang-tools.override (
         {
           # clangd, clang-tidy, clang-format, etc. from the LLZK-scoped libclang.
           clang-unwrapped = tpkgs.clang-unwrapped;
@@ -52,7 +52,18 @@ let
             extraPackages = [ ];
           };
         }
-      );
+      )).overrideAttrs (old: {
+        # The upstream wrappers use Bash syntax but declare /bin/sh, which is
+        # dash on Linux. Nixpkgs generates a separate wrapper for each tool.
+        postInstall = (old.postInstall or "") + ''
+          for tool in "$out"/bin/clang-* "$out"/bin/clangd; do
+            if [ -f "$tool" ] && grep -qx '#!/bin/sh' "$tool"; then
+              substituteInPlace "$tool" \
+                --replace-fail '#!/bin/sh' '#!${pkgs.bash}/bin/bash'
+            fi
+          done
+        '';
+      });
 
       mlir = pkgs.callPackage ./mlir/default.nix {
         inherit cmakeBuildType;

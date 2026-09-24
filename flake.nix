@@ -112,7 +112,11 @@
           inherit (pkgs) mlir mlir-debug;
           # Prevent use of libllvm and llvm from nixpkgs, which will have
           # different versions than mlir/llvm built here.
-          inherit (pkgs.llzk-llvmPackages) libllvm llvm clang-tools;
+          inherit (pkgs.llzk-llvmPackages) libllvm llvm;
+          # Clang unwrapped packages for both release and debug builds
+          # for easy caching handles.
+          clang-unwrapped = pkgs.llzk-llvmPackages.clang-unwrapped;
+          clang-unwrapped-debug = pkgs.llzk-llvmPackages-debug.clang-unwrapped;
         };
 
         formatter = pkgs.nixpkgs-fmt;

@@ -39,6 +39,10 @@ stdenv.mkDerivation rec {
 
   sourceRoot = "${src.name}/mlir";
 
+  # LLVM's CMake configuration selects libc++'s extensive hardening mode.
+  # Do not let the Nix Clang wrapper also define the fast mode.
+  hardeningDisable = [ "libcxxhardeningfast" ];
+
   nativeBuildInputs = [
     cmake
     ninja

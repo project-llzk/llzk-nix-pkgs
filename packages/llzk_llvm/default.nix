@@ -23,6 +23,9 @@ let
           # Enable Z3 Solver for SMTSolver usage
           "-DLLVM_ENABLE_Z3_SOLVER=ON"
         ];
+        # LLVM's CMake configuration selects libc++'s extensive hardening mode.
+        # Do not let the Nix Clang wrapper also define the fast mode.
+        hardeningDisable = (attrs.hardeningDisable or [ ]) ++ [ "libcxxhardeningfast" ];
         propagatedBuildInputs = attrs.propagatedBuildInputs ++ [pkgs.z3];
         patches = attrs.patches ++ [
           # Pending https://github.com/llvm/llvm-project/commit/1d3ea0f50c4bcfababe7929c913df500723dcf2f

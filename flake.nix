@@ -4,22 +4,25 @@
     flake-utils.url = "github:numtide/flake-utils/v1.0.0";
   };
 
-  outputs = { self, nixpkgs, flake-utils }: {
-    overlays.default = final: prev: {
+  outputs = { self, nixpkgs, flake-utils }:
+    let
+      llvmPackagesAttr = "llvmPackages_23";
+    in
+    {
+      overlays.default = final: prev: {
+          llzk-llvmPackages = (import ./packages/llzk_llvm/default.nix {
+            llvmPackages = final.${llvmPackagesAttr};
+          }) final;
 
-      llzk-llvmPackages = (import ./packages/llzk_llvm/default.nix {
-        llvmPackages = final.llvmPackages_23;
-      }) final;
+          llzk-llvmPackages-debug = (import ./packages/llzk_llvm/default.nix {
+            llvmPackages = final.${llvmPackagesAttr};
+            cmakeBuildType = "Debug";
+          }) final;
 
-      llzk-llvmPackages-debug = (import ./packages/llzk_llvm/default.nix {
-        llvmPackages = final.llvmPackages_23;
-        cmakeBuildType = "Debug";
-      }) final;
-
-      mlir = final.llzk-llvmPackages.mlir;
-      mlir-debug = final.llzk-llvmPackages-debug.mlir;
-    };
-  } // (flake-utils.lib.eachDefaultSystem (system:
+          mlir = final.llzk-llvmPackages.mlir;
+          mlir-debug = final.llzk-llvmPackages-debug.mlir;
+        };
+    } // (flake-utils.lib.eachDefaultSystem (system:
     let
       pkgs = import nixpkgs {
         inherit system;
@@ -38,7 +41,7 @@
       mkClangToolsClosureCheck =
         let
           clangTools = pkgs.llzk-llvmPackages.clang-tools;
-          outerLlvm = pkgs.llvmPackages_23.llvm;
+          outerLlvm = pkgs.${llvmPackagesAttr}.llvm;
           discardContext = builtins.unsafeDiscardStringContext;
 
           expectedLibllvm =

@@ -100,7 +100,7 @@
         inherit (pkgs) mlir mlir-debug;
         # Prevent use of libllvm and llvm from nixpkgs, which will have
         # different versions than mlir/llvm built here.
-        inherit (pkgs.llzk-llvmPackages) libllvm llvm;
+        inherit (pkgs.llzk-llvmPackages) libllvm llvm clang-tools;
       };
 
       formatter = pkgs.nixpkgs-fmt;

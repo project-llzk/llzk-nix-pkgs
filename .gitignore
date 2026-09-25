@@ -1,5 +1,8 @@
 # Nix package build
 /result
 
+# Dev
+.vscode
+
 # Miscellaneous
 .DS_Store

@@ -1,20 +1,21 @@
-{ lib
-, stdenv
-, llvm_meta
-, monorepoSrc
-, runCommand
-, cmake
-, ninja
-, python3
-, libffi
-, fixDarwinDylibNames
-, version
-, enableShared ? !stdenv.hostPlatform.isStatic
-, cmakeBuildType ? "Release"
-, enablePythonBindings ? false
-, buildLlvmPackages
-, libxml2
-, libllvm
+{
+  lib,
+  stdenv,
+  llvm_meta,
+  monorepoSrc,
+  runCommand,
+  cmake,
+  ninja,
+  python3,
+  libffi,
+  fixDarwinDylibNames,
+  version,
+  enableShared ? !stdenv.hostPlatform.isStatic,
+  cmakeBuildType ? "Release",
+  enablePythonBindings ? false,
+  buildLlvmPackages,
+  libxml2,
+  libllvm,
 }:
 
 let
@@ -39,12 +40,17 @@ stdenv.mkDerivation rec {
 
   sourceRoot = "${src.name}/mlir";
 
+  # LLVM's CMake configuration selects libc++'s extensive hardening mode.
+  # Do not let the Nix Clang wrapper also define the fast mode.
+  hardeningDisable = [ "libcxxhardeningfast" ];
+
   nativeBuildInputs = [
     cmake
     ninja
     python3
     libffi
-  ] ++ lib.optionals enablePythonBindings pythonDeps # todo: this should be propagated
+  ]
+  ++ lib.optionals enablePythonBindings pythonDeps # todo: this should be propagated
   ++ lib.optional stdenv.hostPlatform.isDarwin fixDarwinDylibNames;
 
   buildInputs = [ libxml2 ];
@@ -64,7 +70,7 @@ stdenv.mkDerivation rec {
     # some of the default options to ensure everything is built.
     # See: https://github.com/llvm/llvm-project/blob/ffcff4af59712792712b33648f8ea148b299c364/llvm/CMakeLists.txt#L788-L789
     "-DLLVM_BUILD_TOOLS=ON"
-    "-DLLVM_BUILD_UTILS=ON"  # needed for mlir-tblgen
+    "-DLLVM_BUILD_UTILS=ON" # needed for mlir-tblgen
 
     # Build settings
     "-DLLVM_ENABLE_IDE=OFF"
@@ -84,7 +90,8 @@ stdenv.mkDerivation rec {
     "-DMLIR_TABLEGEN_EXE=${buildLlvmPackages.tblgen}/bin/mlir-tblgen"
     "-DLLVM_TABLEGEN_EXE=${buildLlvmPackages.tblgen}/bin/llvm-tblgen"
 
-  ] ++ lib.optionals enablePythonBindings [
+  ]
+  ++ lib.optionals enablePythonBindings [
     # Enable Python bindings
     "-DMLIR_ENABLE_BINDINGS_PYTHON=ON"
     "-DMLIR_BUILD_MLIR_C_DYLIB=ON"
@@ -99,32 +106,41 @@ stdenv.mkDerivation rec {
   ];
 
   patches = [
+    # Temporary path pending https://github.com/llvm/llvm-project/pull/222690
+    ./fix-diagnostics-verifier.patch
+
+    # MLIR's custom install rules otherwise hard-code `lib`, bypassing the CMake
+    # hook's CMAKE_INSTALL_LIBDIR and leaving the declared `lib` output empty.
     ./gnu-install-dirs.patch
-    ./tablegen-deps.patch
   ];
 
-  outputs = [ "out" "lib" "dev" ] ++ lib.optionals enablePythonBindings [ "python" ];
+  outputs = [
+    "out"
+    "lib"
+    "dev"
+  ]
+  ++ lib.optionals enablePythonBindings [ "python" ];
 
   postInstall = ''
     # The generated MLIRConfig.cmake assumes the dev binaries are on PATH,
     # so rewrite them to be in the nix store.
     substituteInPlace "$dev"/lib/cmake/mlir/MLIRConfig.cmake \
-      --replace '"mlir-tblgen"' \""$out"/bin/mlir-tblgen\" \
-      --replace '"mlir-src-sharder"' \""$out"/bin/mlir-src-sharder\" \
-      --replace '"mlir-pdll"' \""$out"/bin/mlir-pdll\"
+      --replace-fail '"mlir-tblgen"' \""$out"/bin/mlir-tblgen\" \
+      --replace-fail '"mlir-src-sharder"' \""$out"/bin/mlir-src-sharder\" \
+      --replace-fail '"mlir-pdll"' \""$out"/bin/mlir-pdll\"
 
     ${lib.strings.optionalString enablePythonBindings ''
-    # move mlir source code
-    mkdir -p $python
-    mv $out/src $python/src
+      # move mlir source code
+      mkdir -p $python
+      mv $out/src $python/src
 
-    # move mlir package code
-    mkdir -p $python/${python3.sitePackages}
-    mv $out/python_packages/mlir_core/mlir $python/${python3.sitePackages}/mlir
-    echo 'mlir' > $python/${python3.sitePackages}/mlir_core.pth
+      # move mlir package code
+      mkdir -p $python/${python3.sitePackages}
+      mv $out/python_packages/mlir_core/mlir $python/${python3.sitePackages}/mlir
+      echo 'mlir' > $python/${python3.sitePackages}/mlir_core.pth
 
-    # move Python bindings DSO to lib output, since they are searched for in there
-    mv $python/${python3.sitePackages}/mlir/_mlir_libs/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary} $lib/lib/
+      # move Python bindings DSO to lib output, since they are searched for in there
+      mv $python/${python3.sitePackages}/mlir/_mlir_libs/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary} $lib/lib/
     ''}
   '';
 

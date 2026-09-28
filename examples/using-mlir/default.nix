@@ -1,8 +1,9 @@
-{ stdenv
-, lib
-, cmake
-, ninja
-, mlir_pkg
+{
+  stdenv,
+  lib,
+  cmake,
+  ninja,
+  mlir_pkg,
 }:
 
 stdenv.mkDerivation {
@@ -12,7 +13,10 @@ stdenv.mkDerivation {
   src = lib.cleanSource ./.;
 
   buildInputs = [ mlir_pkg ];
-  nativeBuildInputs = [ cmake ninja ];
+  nativeBuildInputs = [
+    cmake
+    ninja
+  ];
 
   postInstall = ''
     touch "$out"

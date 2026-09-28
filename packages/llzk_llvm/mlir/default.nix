@@ -1,20 +1,21 @@
-{ lib
-, stdenv
-, llvm_meta
-, monorepoSrc
-, runCommand
-, cmake
-, ninja
-, python3
-, libffi
-, fixDarwinDylibNames
-, version
-, enableShared ? !stdenv.hostPlatform.isStatic
-, cmakeBuildType ? "Release"
-, enablePythonBindings ? false
-, buildLlvmPackages
-, libxml2
-, libllvm
+{
+  lib,
+  stdenv,
+  llvm_meta,
+  monorepoSrc,
+  runCommand,
+  cmake,
+  ninja,
+  python3,
+  libffi,
+  fixDarwinDylibNames,
+  version,
+  enableShared ? !stdenv.hostPlatform.isStatic,
+  cmakeBuildType ? "Release",
+  enablePythonBindings ? false,
+  buildLlvmPackages,
+  libxml2,
+  libllvm,
 }:
 
 let
@@ -48,7 +49,8 @@ stdenv.mkDerivation rec {
     ninja
     python3
     libffi
-  ] ++ lib.optionals enablePythonBindings pythonDeps # todo: this should be propagated
+  ]
+  ++ lib.optionals enablePythonBindings pythonDeps # todo: this should be propagated
   ++ lib.optional stdenv.hostPlatform.isDarwin fixDarwinDylibNames;
 
   buildInputs = [ libxml2 ];
@@ -68,7 +70,7 @@ stdenv.mkDerivation rec {
     # some of the default options to ensure everything is built.
     # See: https://github.com/llvm/llvm-project/blob/ffcff4af59712792712b33648f8ea148b299c364/llvm/CMakeLists.txt#L788-L789
     "-DLLVM_BUILD_TOOLS=ON"
-    "-DLLVM_BUILD_UTILS=ON"  # needed for mlir-tblgen
+    "-DLLVM_BUILD_UTILS=ON" # needed for mlir-tblgen
 
     # Build settings
     "-DLLVM_ENABLE_IDE=OFF"
@@ -88,7 +90,8 @@ stdenv.mkDerivation rec {
     "-DMLIR_TABLEGEN_EXE=${buildLlvmPackages.tblgen}/bin/mlir-tblgen"
     "-DLLVM_TABLEGEN_EXE=${buildLlvmPackages.tblgen}/bin/llvm-tblgen"
 
-  ] ++ lib.optionals enablePythonBindings [
+  ]
+  ++ lib.optionals enablePythonBindings [
     # Enable Python bindings
     "-DMLIR_ENABLE_BINDINGS_PYTHON=ON"
     "-DMLIR_BUILD_MLIR_C_DYLIB=ON"
@@ -111,7 +114,12 @@ stdenv.mkDerivation rec {
     ./gnu-install-dirs.patch
   ];
 
-  outputs = [ "out" "lib" "dev" ] ++ lib.optionals enablePythonBindings [ "python" ];
+  outputs = [
+    "out"
+    "lib"
+    "dev"
+  ]
+  ++ lib.optionals enablePythonBindings [ "python" ];
 
   postInstall = ''
     # The generated MLIRConfig.cmake assumes the dev binaries are on PATH,
@@ -122,17 +130,17 @@ stdenv.mkDerivation rec {
       --replace-fail '"mlir-pdll"' \""$out"/bin/mlir-pdll\"
 
     ${lib.strings.optionalString enablePythonBindings ''
-    # move mlir source code
-    mkdir -p $python
-    mv $out/src $python/src
+      # move mlir source code
+      mkdir -p $python
+      mv $out/src $python/src
 
-    # move mlir package code
-    mkdir -p $python/${python3.sitePackages}
-    mv $out/python_packages/mlir_core/mlir $python/${python3.sitePackages}/mlir
-    echo 'mlir' > $python/${python3.sitePackages}/mlir_core.pth
+      # move mlir package code
+      mkdir -p $python/${python3.sitePackages}
+      mv $out/python_packages/mlir_core/mlir $python/${python3.sitePackages}/mlir
+      echo 'mlir' > $python/${python3.sitePackages}/mlir_core.pth
 
-    # move Python bindings DSO to lib output, since they are searched for in there
-    mv $python/${python3.sitePackages}/mlir/_mlir_libs/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary} $lib/lib/
+      # move Python bindings DSO to lib output, since they are searched for in there
+      mv $python/${python3.sitePackages}/mlir/_mlir_libs/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary} $lib/lib/
     ''}
   '';
 

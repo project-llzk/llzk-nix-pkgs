@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+#
+# Build the LLVM variants, populate Cachix, and leave a PR-visible summary.
+#
+# Requirements:
+#   nix
+#   cachix
+#   git
+#   gh (optional): print summary to GitHub, else locally if absent
+#
+# Important:
+#   Run from the root of this Git repository; the script uses its nix flake and
+#   git state.
+#
+# Usage:
+#   scripts/build-and-push-cachix [--no-gc] [--no-core-limit] [--no-trigger-ci]
+#
+# The `--no-gc` option skips garbage collection before the builds.
+# The `--no-core-limit` option lets Nix choose its own build parallelism.
+# The `--no-trigger-ci` option disables the automatic CI trigger after successful
+#    builds. By default, the script creates and pushes an empty commit to trigger
+#    GitHub CI if every build and Cachix upload was successful (unless the
+#    checkout is dirty, to avoid unintentional file modifications).
+
+set -uo pipefail
+
+cache=veridise-public
+trigger_ci=true
+can_trigger_ci=true
+run_gc=true
+limit_cores=true
+pr_number=""
+
+while (($#)); do
+  case "$1" in
+    --no-gc) run_gc=false ;;
+    --no-core-limit) limit_cores=false ;;
+    --no-trigger-ci) trigger_ci=false ;;
+    -h|--help)
+      sed -n '2,/^$/p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "Usage: $0 [--no-gc] [--no-core-limit] [--no-trigger-ci]" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+names=(mlir mlir-debug clang-unwrapped clang-unwrapped-debug)
+cores=(2 1 2 1)
+results=()
+
+if ! current_system=$(nix eval --impure --raw --expr 'builtins.currentSystem' 2>/dev/null); then
+  current_system="unavailable (nix eval failed)"
+fi
+
+# Do notification and CI-trigger checks before potentially long builds.
+if command -v gh >/dev/null 2>&1; then
+  if ! pr_number=$(gh pr view --json number --jq .number 2>/dev/null); then
+    pr_number=""
+    echo "WARNING: no PR was found for this branch; summary will only be printed locally." >&2
+  fi
+else
+  echo "WARNING: gh is unavailable; summary will only be printed locally." >&2
+fi
+
+if "$trigger_ci" && [[ -n $(git status --porcelain) ]]; then
+  can_trigger_ci=false
+  echo "WARNING: checkout is dirty; the empty CI-trigger commit will be skipped." >&2
+fi
+
+push_closure() {
+  local attr=$1 derivation
+
+  derivation=$(nix path-info --derivation ".#$attr") || return 1
+  # A derivation can have more than one output; xargs keeps each store path
+  # as its own nix-store argument instead of collapsing them into one string.
+  nix-store -q "$derivation" | xargs nix-store -qR | cachix push "$cache"
+}
+
+build_and_push() {
+  local attr=$1 build_cores=$2
+  local -a build_command=(nix build)
+
+  echo
+  if "$limit_cores"; then
+    echo "==> Building .#$attr (cores: $build_cores)"
+    build_command+=(--cores "$build_cores")
+  else
+    echo "==> Building .#$attr (no core limit)"
+  fi
+  build_command+=(".#$attr")
+  if ! "${build_command[@]}"; then
+    echo "FAIL: .#$attr build failed; Cachix upload skipped." >&2
+    results+=("$attr: build failed (upload skipped)")
+    return
+  fi
+
+  echo "==> Uploading .#$attr closure to $cache"
+  if ! push_closure "$attr"; then
+    echo "FAIL: .#$attr upload failed." >&2
+    results+=("$attr: build passed; upload failed")
+    return
+  fi
+
+  results+=("$attr: passed")
+}
+
+if "$run_gc"; then
+  echo "==> Collecting Nix garbage before builds"
+  if ! nix-collect-garbage; then
+    echo "WARNING: garbage collection failed; continuing with builds." >&2
+  fi
+fi
+
+for i in "${!names[@]}"; do
+  build_and_push "${names[$i]}" "${cores[$i]}"
+done
+
+all_passed=true
+for result in "${results[@]}"; do
+  [[ $result == *": passed" ]] || all_passed=false
+done
+
+summary="Cachix build/upload results for \`$current_system\`:"
+for result in "${results[@]}"; do
+  summary+=$'\n'
+  if [[ $result == *": passed" ]]; then
+    summary+="- ✅ $result"
+  else
+    summary+="- ❌ $result"
+  fi
+done
+
+if "$trigger_ci" && "$all_passed" && "$can_trigger_ci"; then
+  if git commit --allow-empty --only -m "chore: trigger CI after Cachix build" && git push; then
+    summary+=$'\n\n'
+    summary+="✅ All variants passed; pushed an empty commit to trigger CI."
+  else
+    summary+=$'\n\n'
+    summary+="⚠️ All variants passed, but the empty CI-trigger commit could not be pushed."
+  fi
+elif "$trigger_ci" && "$all_passed"; then
+  summary+=$'\n\n'
+  summary+="CI was not triggered because the checkout was dirty before the builds started."
+elif "$trigger_ci"; then
+  summary+=$'\n\n'
+  summary+="CI was not triggered because at least one variant failed."
+fi
+
+echo
+echo "$summary"
+
+if [[ -n $pr_number ]]; then
+  if ! gh pr comment "$pr_number" --body "$summary"; then
+    echo "WARNING: could not post the summary to PR #$pr_number." >&2
+  fi
+fi
+
+if "$all_passed"; then
+  exit 0
+fi
+exit 1

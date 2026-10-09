@@ -7,6 +7,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    # Timeout if components aren't cached because LLVM/MLIR/Clang can't build successfully on GitHub runners.
+    # Run `scripts/build-and-push-cachix` from a machine with sufficient resources and the same Ubuntu version.
+    timeout-minutes: 2
     steps:
       - name: Checkout
         uses: actions/checkout@v6

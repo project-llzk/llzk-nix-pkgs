@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Build the LLVM variants, populate Cachix, and leave a PR-visible summary.
+# Build the LLVM variants, populate Cachix, and post/update a PR progress comment.
 #
 # Requirements:
 #   nix
 #   cachix
 #   git
-#   gh (optional): print summary to GitHub, else locally if absent
+#   gh (optional): report progress on GitHub, else print summary locally
 #
 # Important:
 #   Run from the root of this Git repository; the script uses its nix flake and
@@ -30,6 +30,8 @@ can_trigger_ci=true
 run_gc=true
 limit_cores=true
 pr_number=""
+comment_url=""
+ci_summary=""
 
 while (($#)); do
   case "$1" in
@@ -51,6 +53,9 @@ done
 names=(mlir mlir-debug clang-unwrapped clang-unwrapped-debug)
 cores=(2 1 2 1)
 results=()
+for name in "${names[@]}"; do
+  results+=("$name: pending")
+done
 
 if ! current_system=$(nix eval --impure --raw --expr 'builtins.currentSystem' 2>/dev/null); then
   current_system="unavailable (nix eval failed)"
@@ -71,6 +76,32 @@ if "$trigger_ci" && [[ -n $(git status --porcelain) ]]; then
   echo "WARNING: checkout is dirty; the empty CI-trigger commit will be skipped." >&2
 fi
 
+render_summary() {
+  local result
+  summary="Cachix build/upload results for \`$current_system\`:"
+  for result in "${results[@]}"; do
+    summary+=$'\n'
+    case "$result" in
+      *": passed") summary+="- ✅ $result" ;;
+      *failed*) summary+="- ❌ $result" ;;
+      *) summary+="- ⏳ $result" ;;
+    esac
+  done
+  if [[ -n $ci_summary ]]; then
+    summary+=$'\n\n'
+    summary+="$ci_summary"
+  fi
+}
+
+update_comment() {
+  render_summary
+  if [[ -n $comment_url ]]; then
+    if ! gh api --method PATCH "$comment_url" --raw-field "body=$summary" --silent; then
+      echo "WARNING: could not update the progress comment on PR #$pr_number." >&2
+    fi
+  fi
+}
+
 push_closure() {
   local attr=$1 derivation
 
@@ -81,9 +112,12 @@ push_closure() {
 }
 
 build_and_push() {
-  local attr=$1 build_cores=$2
+  local index=$1
+  local attr=${names[$index]} build_cores=${cores[$index]}
   local -a build_command=(nix build)
 
+  results[$index]="$attr: building"
+  update_comment
   echo
   if "$limit_cores"; then
     echo "==> Building .#$attr (cores: $build_cores)"
@@ -94,18 +128,23 @@ build_and_push() {
   build_command+=(".#$attr")
   if ! "${build_command[@]}"; then
     echo "FAIL: .#$attr build failed; Cachix upload skipped." >&2
-    results+=("$attr: build failed (upload skipped)")
+    results[$index]="$attr: build failed (upload skipped)"
+    update_comment
     return
   fi
 
+  results[$index]="$attr: build passed; uploading"
+  update_comment
   echo "==> Uploading .#$attr closure to $cache"
   if ! push_closure "$attr"; then
     echo "FAIL: .#$attr upload failed." >&2
-    results+=("$attr: build passed; upload failed")
+    results[$index]="$attr: build passed; upload failed"
+    update_comment
     return
   fi
 
-  results+=("$attr: passed")
+  results[$index]="$attr: passed"
+  update_comment
 }
 
 if "$run_gc"; then
@@ -115,8 +154,18 @@ if "$run_gc"; then
   fi
 fi
 
+render_summary
+if [[ -n $pr_number ]]; then
+  # Keep this run's comment URL so other runs or comments cannot redirect edits.
+  if ! comment_url=$(gh api --method POST "repos/{owner}/{repo}/issues/$pr_number/comments" \
+    --raw-field "body=$summary" --jq .url); then
+    comment_url=""
+    echo "WARNING: could not create the progress comment on PR #$pr_number; summary will only be printed locally." >&2
+  fi
+fi
+
 for i in "${!names[@]}"; do
-  build_and_push "${names[$i]}" "${cores[$i]}"
+  build_and_push "$i"
 done
 
 all_passed=true
@@ -124,40 +173,23 @@ for result in "${results[@]}"; do
   [[ $result == *": passed" ]] || all_passed=false
 done
 
-summary="Cachix build/upload results for \`$current_system\`:"
-for result in "${results[@]}"; do
-  summary+=$'\n'
-  if [[ $result == *": passed" ]]; then
-    summary+="- ✅ $result"
-  else
-    summary+="- ❌ $result"
-  fi
-done
-
 if "$trigger_ci" && "$all_passed" && "$can_trigger_ci"; then
+  ci_summary="⏳ CI trigger pending: creating and pushing an empty commit."
+  update_comment
   if git commit --allow-empty --only -m "chore: trigger CI after Cachix build" && git push; then
-    summary+=$'\n\n'
-    summary+="✅ All variants passed; pushed an empty commit to trigger CI."
+    ci_summary="✅ All variants passed; pushed an empty commit to trigger CI."
   else
-    summary+=$'\n\n'
-    summary+="⚠️ All variants passed, but the empty CI-trigger commit could not be pushed."
+    ci_summary="⚠️ All variants passed, but the empty CI-trigger commit could not be pushed."
   fi
 elif "$trigger_ci" && "$all_passed"; then
-  summary+=$'\n\n'
-  summary+="CI was not triggered because the checkout was dirty before the builds started."
+  ci_summary="CI was not triggered because the checkout was dirty before the builds started."
 elif "$trigger_ci"; then
-  summary+=$'\n\n'
-  summary+="CI was not triggered because at least one variant failed."
+  ci_summary="CI was not triggered because at least one variant failed."
 fi
 
+update_comment
 echo
 echo "$summary"
-
-if [[ -n $pr_number ]]; then
-  if ! gh pr comment "$pr_number" --body "$summary"; then
-    echo "WARNING: could not post the summary to PR #$pr_number." >&2
-  fi
-fi
 
 if "$all_passed"; then
   exit 0

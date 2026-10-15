@@ -30,6 +30,7 @@
 
         mlir = final.llzk-llvmPackages.mlir;
         mlir-debug = final.llzk-llvmPackages-debug.mlir;
+        mlir-with-python = final.mlir.override { enablePythonBindings = true; };
       };
     }
     // (flake-utils.lib.eachDefaultSystem (
@@ -106,10 +107,24 @@
 
               touch "$out"
             '';
+
+        # Exercise the installed Python output, including its native libraries.
+        mkMlirPythonCheck =
+          pkgs.runCommand "mlir-python-bindings"
+            {
+              nativeBuildInputs = [ pkgs.python3 ];
+              PYTHONPATH = pkgs.lib.makeSearchPath pkgs.python3.sitePackages (
+                [ pkgs.mlir-with-python.python ] ++ pkgs.mlir-with-python.pythonDeps
+              );
+            }
+            ''
+              python ${./examples/using-mlir-python/smoke.py}
+              touch "$out"
+            '';
       in
       {
         packages = flake-utils.lib.flattenTree {
-          inherit (pkgs) mlir mlir-debug;
+          inherit (pkgs) mlir mlir-debug mlir-with-python;
           # Prevent use of libllvm and llvm from nixpkgs, which will have
           # different versions than mlir/llvm built here.
           inherit (pkgs.llzk-llvmPackages) libllvm llvm;
@@ -133,6 +148,7 @@
           };
 
           clang-tools-uses-llzk-llvm = mkClangToolsClosureCheck;
+          using-mlir-python = mkMlirPythonCheck;
         };
       }
     ));

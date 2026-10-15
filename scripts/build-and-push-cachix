@@ -50,8 +50,8 @@ while (($#)); do
   shift
 done
 
-names=(mlir mlir-debug clang-unwrapped clang-unwrapped-debug)
-cores=(2 1 2 1)
+names=(mlir mlir-debug mlir-with-python clang-unwrapped clang-unwrapped-debug)
+cores=(2 1 2 2 1)
 results=()
 for name in "${names[@]}"; do
   results+=("$name: pending")

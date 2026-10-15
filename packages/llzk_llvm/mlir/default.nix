@@ -21,7 +21,7 @@
 let
   pythonDeps = with python3.pkgs; [
     numpy
-    pybind11
+    nanobind
     pyyaml
   ];
 in
@@ -96,7 +96,6 @@ stdenv.mkDerivation rec {
     "-DMLIR_ENABLE_BINDINGS_PYTHON=ON"
     "-DMLIR_BUILD_MLIR_C_DYLIB=ON"
     "-DPython3_EXECUTABLE=${python3}/bin/python"
-    "-DPython3_NumPy_INCLUDE_DIR=${python3.pkgs.numpy}/${python3.sitePackages}/numpy/core/include"
     # ] ++ lib.optionals enableManpages [
     #   "-DCLANG_INCLUDE_DOCS=ON"
     #   "-DLLVM_ENABLE_SPHINX=ON"
@@ -141,6 +140,9 @@ stdenv.mkDerivation rec {
 
       # move Python bindings DSO to lib output, since they are searched for in there
       mv $python/${python3.sitePackages}/mlir/_mlir_libs/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary} $lib/lib/
+      # Preserve the loader-relative location used by the installed extensions.
+      ln -s $lib/lib/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary} \
+        $python/${python3.sitePackages}/mlir/_mlir_libs/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary}
     ''}
   '';
 

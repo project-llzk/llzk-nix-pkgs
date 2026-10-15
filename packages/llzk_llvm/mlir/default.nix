@@ -138,11 +138,14 @@ stdenv.mkDerivation rec {
       mv $out/python_packages/mlir_core/mlir $python/${python3.sitePackages}/mlir
       echo 'mlir' > $python/${python3.sitePackages}/mlir_core.pth
 
-      # move Python bindings DSO to lib output, since they are searched for in there
-      mv $python/${python3.sitePackages}/mlir/_mlir_libs/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary} $lib/lib/
-      # Preserve the loader-relative location used by the installed extensions.
-      ln -s $lib/lib/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary} \
-        $python/${python3.sitePackages}/mlir/_mlir_libs/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary}
+      # Extensions link to the C API, MLIR Python support, and nanobind libraries in the lib output. Move
+      # all shared libraries and their versioned symlinks together, keeping the extension modules in Python.
+      for pythonLibrary in "$python/${python3.sitePackages}/mlir/_mlir_libs"/lib*${stdenv.hostPlatform.extensions.sharedLibrary}*; do
+        pythonLibraryName=$(basename "$pythonLibrary")
+        mv "$pythonLibrary" "$lib/lib/"
+        # Preserve every loader-relative name used by the installed extensions.
+        ln -s "$lib/lib/$pythonLibraryName" "$pythonLibrary"
+      done
     ''}
   '';
 

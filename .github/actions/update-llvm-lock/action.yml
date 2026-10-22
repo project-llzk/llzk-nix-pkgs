@@ -1,0 +1,113 @@
+name: Update LLVM lock file
+description: Lock a qualifying LLVM update, select its package set, and commit the change.
+
+inputs:
+  bot-name:
+    description: GitHub App bot login used to author the lock-file commit.
+    required: false
+    default: nix-pkgs-llvm-update-bot[bot]
+  locked-version:
+    required: true
+  locked-packages-attr:
+    required: true
+  token:
+    description: Token permitted to look up the commit bot account.
+    required: true
+
+outputs:
+  changed:
+    value: ${{ steps.update.outputs.changed }}
+  revision:
+    value: ${{ steps.update.outputs.revision }}
+  version:
+    value: ${{ steps.update.outputs.version }}
+  packages-attr:
+    value: ${{ steps.update.outputs.packages_attr }}
+  major-update:
+    value: ${{ steps.update.outputs.major_update }}
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/configure-github-app-git-identity
+      with:
+        bot-name: ${{ inputs.bot-name }}
+        token: ${{ inputs.token }}
+    - id: update
+      shell: bash
+      env:
+        LOCKED_VERSION: ${{ inputs.locked-version }}
+        LOCKED_PACKAGES_ATTR: ${{ inputs.locked-packages-attr }}
+      run: |
+        set -euo pipefail
+
+        write_output() {
+          echo "$1=$2" >> "$GITHUB_OUTPUT"
+        }
+
+        latest_llvm_packages_attr() {
+          nix eval --json \
+            --apply 'pkgs: builtins.filter (name: builtins.match "llvmPackages_[0-9]+" name != null) (builtins.attrNames pkgs)' \
+            "github:NixOS/nixpkgs/$1#legacyPackages.x86_64-linux" \
+            | jq -er '
+                map({
+                  attr: .,
+                  major: (capture("^llvmPackages_(?<major>[0-9]+)$").major | tonumber)
+                })
+                | max_by(.major).attr
+              '
+        }
+
+        # Lock first, then resolve the package set from the locked revision.
+        # This avoids selecting a package set from a moving nixpkgs-unstable.
+        nix flake update nixpkgs
+        updated_revision=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)
+        updated_packages_attr=$(latest_llvm_packages_attr "$updated_revision")
+        updated_version=$(nix eval --raw \
+          "github:NixOS/nixpkgs/$updated_revision#$updated_packages_attr.llvm.version")
+
+        # Both the package-set attribute and LLVM's version must agree on the
+        # major release before we update the flake configuration.
+        updated_major=${updated_packages_attr#llvmPackages_}
+        updated_version_major=${updated_version%%[.-]*}
+        [[ $updated_major =~ ^[0-9]+$ ]]
+        [[ $updated_version_major == "$updated_major" ]]
+        locked_major=${LOCKED_VERSION%%[.-]*}
+
+        # nixpkgs-unstable can advance between detection and locking. Recheck
+        # the locked result before committing any change.
+        if [[ $updated_version == "$LOCKED_VERSION" || $updated_major -lt $locked_major ]]; then
+          echo 'The resolved lock no longer represents a qualifying LLVM update.'
+          write_output changed false
+          exit 0
+        fi
+
+        # A major LLVM update also requires selecting its versioned package set.
+        if [[ $updated_packages_attr != "$LOCKED_PACKAGES_ATTR" ]]; then
+          sed -i -E \
+            "s|llvmPackagesAttr = \"$LOCKED_PACKAGES_ATTR\";|llvmPackagesAttr = \"$updated_packages_attr\";|" \
+            flake.nix
+          if ! grep -Fqx "      llvmPackagesAttr = \"$updated_packages_attr\";" flake.nix; then
+            echo "Failed to select $updated_packages_attr in flake.nix." >&2
+            exit 1
+          fi
+        fi
+        if git diff --quiet -- flake.lock flake.nix; then
+          echo 'LLVM update did not change flake.lock or flake.nix.'
+          write_output changed false
+          exit 0
+        fi
+
+        # Commit only a validated lock-file and package-set update.
+        git add flake.lock flake.nix
+        git commit -m "chore: bump LLVM to $updated_version"
+
+        major_update=false
+        if [[ $updated_packages_attr != "$LOCKED_PACKAGES_ATTR" ]]; then
+          major_update=true
+        fi
+        write_output revision "$updated_revision"
+        write_output version "$updated_version"
+        write_output packages_attr "$updated_packages_attr"
+        write_output major_update "$major_update"
+        write_output changed true

@@ -1,0 +1,30 @@
+name: Verify LLVM update candidate
+description: Verify the checked-out trusted candidate contains only the permitted update files.
+
+inputs:
+  base-ref:
+    required: true
+  event-sha:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        BASE_REF: ${{ inputs.base-ref }}
+        EVENT_SHA: ${{ inputs.event-sha }}
+      run: |
+        set -euo pipefail
+        [[ $(git rev-parse HEAD) == "$EVENT_SHA" ]]
+        mapfile -t changed_paths < <(git diff --name-only "origin/$BASE_REF...HEAD")
+        [[ ${#changed_paths[@]} -ge 1 && ${#changed_paths[@]} -le 2 ]]
+        has_lock=false
+        for changed_path in "${changed_paths[@]}"; do
+          case "$changed_path" in
+            flake.lock) has_lock=true ;;
+            flake.nix) ;;
+            *) echo "Untrusted candidate changes '$changed_path'." >&2; exit 1 ;;
+          esac
+        done
+        [[ $has_lock == true ]]

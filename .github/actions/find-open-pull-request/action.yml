@@ -1,0 +1,36 @@
+name: Find open pull request
+description: Find the open pull request for a repository, base branch, and head branch.
+
+inputs:
+  base-branch:
+    description: Pull request base branch.
+    required: true
+  head-branch:
+    description: Pull request head branch.
+    required: true
+  repository:
+    description: Repository in OWNER/REPOSITORY form.
+    required: true
+  token:
+    description: Token permitted to list pull requests.
+    required: true
+
+outputs:
+  number:
+    description: The open pull request number, or an empty string if none exists.
+    value: ${{ steps.find.outputs.number }}
+
+runs:
+  using: composite
+  steps:
+    - id: find
+      shell: bash
+      env:
+        BASE_BRANCH: ${{ inputs.base-branch }}
+        GH_TOKEN: ${{ inputs.token }}
+        HEAD_BRANCH: ${{ inputs.head-branch }}
+        REPOSITORY: ${{ inputs.repository }}
+      run: |
+        set -euo pipefail
+        pr_number=$(gh pr list --repo "$REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" --state open --json number --jq '.[0].number // empty')
+        echo "number=$pr_number" >> "$GITHUB_OUTPUT"

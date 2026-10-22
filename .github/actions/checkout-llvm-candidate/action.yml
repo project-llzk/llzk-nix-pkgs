@@ -1,0 +1,25 @@
+name: Check out LLVM candidate branch
+description: Continue an open LLVM update branch, or create it from main.
+
+inputs:
+  branch:
+    description: Candidate branch to continue or create.
+    required: false
+    default: bot/bump-llvm
+  pr-number:
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        if [[ -n $PR_NUMBER ]]; then
+          git fetch origin "$BRANCH"
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+        else
+          git checkout -B "$BRANCH" origin/main
+        fi

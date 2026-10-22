@@ -1,0 +1,176 @@
+name: Bump llzk-lib flake input
+
+# This workflow runs from main after the trusted LLVM-update PR is merged.  It
+# never checks out or executes the merged PR's contents.
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-llzk-lib
+  # Queue merges so every run can refresh the one downstream PR to the newest
+  # upstream revision without concurrent writes to its bot branch.
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'bot/bump-llvm' &&
+      github.event.pull_request.user.login == 'nix-pkgs-llvm-update-bot[bot]'
+    runs-on: ubuntu-24.04
+    environment: llzk-lib-update-automation
+    steps:
+      - name: Create llzk-lib update token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.LLZK_LIB_UPDATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LLZK_LIB_UPDATE_APP_PRIVATE_KEY }}
+          owner: project-llzk
+          repositories: llzk-lib
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Get downstream update bot identity
+        id: bot
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          bot_id=$(gh api "/users/${BOT_SLUG}[bot]" --jq .id)
+          {
+            echo "slug=$BOT_SLUG"
+            echo "id=$bot_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Find existing open downstream bump PR
+        id: existing-pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          pr_number=$(gh pr list \
+            --repo project-llzk/llzk-lib \
+            --base main \
+            --head bot/bump-llzk-pkgs \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+
+      - name: Check out llzk-lib main
+        uses: actions/checkout@v6
+        with:
+          repository: project-llzk/llzk-lib
+          token: ${{ steps.app-token.outputs.token }}
+          ref: main
+          path: llzk-lib
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.35.2/install
+          github_access_token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set Git credentials for Nix inputs
+        run: |
+          git config --global 'url.https://api@github.com/'.insteadOf 'https://github.com/'
+          git config --global 'url.https://ssh@github.com/'.insteadOf 'ssh://git@github.com/'
+          git config --global 'url.https://git@github.com/'.insteadOf 'git@github.com:'
+
+      - name: Create downstream bump branch
+        working-directory: llzk-lib
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin bot/bump-llzk-pkgs >/dev/null; then
+            git fetch origin \
+              bot/bump-llzk-pkgs:refs/remotes/origin/bot/bump-llzk-pkgs
+          fi
+          git checkout -B bot/bump-llzk-pkgs origin/main
+
+      - name: Update llzk-pkgs flake input
+        id: update
+        working-directory: llzk-lib
+        run: |
+          set -euo pipefail
+          nix flake update llzk-pkgs
+
+          if git diff --quiet -- flake.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          llzk_pkgs_revision=$(jq -er '.nodes["llzk-pkgs"].locked.rev' flake.lock)
+          nixpkgs_revision=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)
+          {
+            echo "changed=true"
+            echo "llzk_pkgs_revision=$llzk_pkgs_revision"
+            echo "nixpkgs_revision=$nixpkgs_revision"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit lock-file update
+        if: steps.update.outputs.changed == 'true'
+        working-directory: llzk-lib
+        env:
+          BOT_SLUG: ${{ steps.bot.outputs.slug }}
+          BOT_ID: ${{ steps.bot.outputs.id }}
+          LLZK_PKGS_REVISION: ${{ steps.update.outputs.llzk_pkgs_revision }}
+        run: |
+          set -euo pipefail
+          git config user.name "${BOT_SLUG}[bot]"
+          git config user.email "${BOT_ID}+${BOT_SLUG}[bot]@users.noreply.github.com"
+          git add flake.lock
+          git commit -m "chore: bump llzk-pkgs flake input to $LLZK_PKGS_REVISION"
+
+      - name: Push downstream bump branch
+        if: steps.update.outputs.changed == 'true'
+        working-directory: llzk-lib
+        run: git push --force-with-lease origin HEAD:bot/bump-llzk-pkgs
+
+      - name: Create or update downstream PR
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.existing-pr.outputs.number }}
+          UPSTREAM_PR: ${{ github.event.pull_request.number }}
+          UPSTREAM_REVISION: ${{ github.sha }}
+          LLZK_PKGS_REVISION: ${{ steps.update.outputs.llzk_pkgs_revision }}
+          NIXPKGS_REVISION: ${{ steps.update.outputs.nixpkgs_revision }}
+        run: |
+          set -euo pipefail
+
+          title="chore: bump llzk-pkgs flake input to $LLZK_PKGS_REVISION"
+          body=$(cat <<EOF
+          Automated flake input update after project-llzk/llzk-nix-pkgs#$UPSTREAM_PR merged.
+
+          - Merged upstream revision: \`$UPSTREAM_REVISION\`
+          - Resolved llzk-pkgs revision: \`$LLZK_PKGS_REVISION\`
+          - Resolved nixpkgs revision: \`$NIXPKGS_REVISION\`
+          - Source workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          This PR must be reviewed and merged manually. It does not enable auto-merge.
+          EOF
+          )
+
+          if [[ -n $PR_NUMBER ]]; then
+            gh pr edit "$PR_NUMBER" \
+              --repo project-llzk/llzk-lib \
+              --title "$title" \
+              --body "$body"
+          else
+            gh pr create \
+              --repo project-llzk/llzk-lib \
+              --base main \
+              --head bot/bump-llzk-pkgs \
+              --title "$title" \
+              --body "$body"
+          fi

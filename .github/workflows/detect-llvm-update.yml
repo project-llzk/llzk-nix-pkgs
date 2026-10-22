@@ -73,35 +73,61 @@ jobs:
         if: steps.detect.outputs.qualifying == 'true'
         env:
           LOCKED_VERSION: ${{ steps.detect.outputs.locked_version }}
+          LOCKED_PACKAGES_ATTR: ${{ steps.detect.outputs.locked_packages_attr }}
         run: |
+          set -euo pipefail
+
           nix flake update nixpkgs
 
           updated_revision=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)
+          updated_packages_attr=$(nix eval --json \
+            --apply 'pkgs: builtins.filter (name: builtins.match "llvmPackages_[0-9]+" name != null) (builtins.attrNames pkgs)' \
+            "github:NixOS/nixpkgs/$updated_revision#legacyPackages.x86_64-linux" \
+            | jq -er 'map({ attr: ., major: (capture("^llvmPackages_(?<major>[0-9]+)$").major | tonumber) }) | max_by(.major).attr')
           updated_version=$(nix eval --raw \
-            "github:NixOS/nixpkgs/$updated_revision#llvmPackages_23.llvm.version")
-          updated_major=${updated_version%%[.-]*}
+            "github:NixOS/nixpkgs/$updated_revision#$updated_packages_attr.llvm.version")
+          updated_major=${updated_packages_attr#llvmPackages_}
+          updated_version_major=${updated_version%%[.-]*}
+          [[ $updated_major =~ ^[0-9]+$ ]]
+          [[ $updated_version_major == "$updated_major" ]]
+          locked_major=${LOCKED_VERSION%%[.-]*}
 
-          # nixpkgs-unstable can advance between detection and locking.  Do
-          # not turn that race into an accidental major-version PR.
-          if [[ $updated_version == "$LOCKED_VERSION" || $updated_major != "23" ]]; then
-            echo "The resolved lock no longer represents a qualifying LLVM 23 update."
+          # nixpkgs-unstable can advance between detection and locking. Re-read
+          # its versioned package-set attributes so a race selects the newest
+          # explicitly versioned LLVM package set.
+          if [[ $updated_version == "$LOCKED_VERSION" || $updated_major -lt $locked_major ]]; then
+            echo "The resolved lock no longer represents a qualifying LLVM update."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if git diff --quiet -- flake.lock; then
-            echo "nixpkgs lock did not change."
+          if [[ $updated_packages_attr != "$LOCKED_PACKAGES_ATTR" ]]; then
+            sed -i -E "s|llvmPackagesAttr = \"$LOCKED_PACKAGES_ATTR\";|llvmPackagesAttr = \"$updated_packages_attr\";|" flake.nix
+            if ! grep -Fqx "      llvmPackagesAttr = \"$updated_packages_attr\";" flake.nix; then
+              echo "Failed to select $updated_packages_attr in flake.nix." >&2
+              exit 1
+            fi
+          fi
+
+          if git diff --quiet -- flake.lock flake.nix; then
+            echo "LLVM update did not change flake.lock or flake.nix."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           git config user.name "nix-pkgs-llvm-update-bot[bot]"
           git config user.email "nix-pkgs-llvm-update-bot[bot]@users.noreply.github.com"
-          git add flake.lock
+          git add flake.lock flake.nix
           git commit -m "chore: bump LLVM to $updated_version"
+          major_update=false
+          if [[ $updated_packages_attr != "$LOCKED_PACKAGES_ATTR" ]]; then
+            major_update=true
+          fi
           {
             echo "revision=$updated_revision"
             echo "version=$updated_version"
+            echo "packages_attr=$updated_packages_attr"
+            echo "major_update=$major_update"
             echo "changed=true"
           } >> "$GITHUB_OUTPUT"
 
@@ -118,16 +144,19 @@ jobs:
           OLD_REVISION: ${{ steps.detect.outputs.locked_revision }}
           NEW_VERSION: ${{ steps.update.outputs.version }}
           NEW_REVISION: ${{ steps.update.outputs.revision }}
+          NEW_PACKAGES_ATTR: ${{ steps.update.outputs.packages_attr }}
+          MAJOR_UPDATE: ${{ steps.update.outputs.major_update }}
         run: |
           title="chore: bump LLVM to $NEW_VERSION"
           body=$(cat <<EOF
-          Automated same-major LLVM update.
+          Automated LLVM update.
 
           - LLVM: \`$OLD_VERSION\` → \`$NEW_VERSION\`
           - nixpkgs: \`$OLD_REVISION\` → \`$NEW_REVISION\`
+          - LLVM package set: \`$NEW_PACKAGES_ATTR\`
           - Detection workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
-          This PR does not upgrade the LLVM major version and must be merged manually.
+          This is a $([[ $MAJOR_UPDATE == true ]] && echo "major-version" || echo "same-major") LLVM update and must be merged manually.
           EOF
           )
 

@@ -9,7 +9,6 @@
 
 set -euo pipefail
 
-llvm_packages_attr="llvmPackages_23"
 nixpkgs_owner="NixOS"
 nixpkgs_repo="nixpkgs"
 
@@ -27,9 +26,23 @@ write_output() {
 }
 
 llvm_version_at() {
-  local revision=$1
+  local revision=$1 llvm_packages_attr=$2
   nix eval --raw \
     "github:${nixpkgs_owner}/${nixpkgs_repo}/${revision}#${llvm_packages_attr}.llvm.version"
+}
+
+newest_llvm_packages_attr_at() {
+  local revision=$1
+  nix eval --json \
+    --apply 'pkgs: builtins.filter (name: builtins.match "llvmPackages_[0-9]+" name != null) (builtins.attrNames pkgs)' \
+    "github:NixOS/nixpkgs/$revision#legacyPackages.x86_64-linux" \
+    | jq -er '
+        map({
+          attr: .,
+          major: (capture("^llvmPackages_(?<major>[0-9]+)$").major | tonumber)
+        })
+        | max_by(.major).attr
+      '
 }
 
 major_version() {
@@ -41,6 +54,21 @@ major_version() {
   fi
 }
 
+llvm_packages_attr_from_flake() {
+  local attr count
+  attr=$(sed -nE 's/^[[:space:]]*llvmPackagesAttr[[:space:]]*=[[:space:]]*"(llvmPackages_[0-9]+)";[[:space:]]*$/\1/p' flake.nix)
+  count=$(printf '%s\n' "$attr" | sed '/^$/d' | wc -l | tr -d ' ')
+
+  if [[ $count != 1 ]]; then
+    die "flake.nix must define exactly one versioned llvmPackagesAttr"
+  fi
+  if [[ ! $attr =~ ^llvmPackages_([0-9]+)$ ]]; then
+    die "could not determine LLVM major version from package attribute '$attr'"
+  fi
+
+  printf '%s\n' "$attr"
+}
+
 [[ -f flake.lock ]] || die "run this script from the repository root"
 command -v jq >/dev/null || die "jq is required"
 
@@ -48,18 +76,31 @@ locked_revision=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock) || die "flake.l
 candidate_revision=$(nix flake metadata --json --refresh \
   "github:${nixpkgs_owner}/${nixpkgs_repo}/nixpkgs-unstable" | jq -er '.locked.rev')
 
-locked_version=$(llvm_version_at "$locked_revision")
-candidate_version=$(llvm_version_at "$candidate_revision")
+locked_packages_attr=$(llvm_packages_attr_from_flake)
+locked_version=$(llvm_version_at "$locked_revision" "$locked_packages_attr")
+candidate_packages_attr=$(newest_llvm_packages_attr_at "$candidate_revision")
+candidate_version=$(llvm_version_at "$candidate_revision" "$candidate_packages_attr")
 locked_major=$(major_version "$locked_version")
-candidate_major=$(major_version "$candidate_version")
+candidate_major=${candidate_packages_attr#llvmPackages_}
+
+if [[ $(major_version "$candidate_version") != "$candidate_major" ]]; then
+  die "candidate package attribute '$candidate_packages_attr' does not match LLVM version '$candidate_version'"
+fi
+
+if [[ $locked_packages_attr != "llvmPackages_${locked_major}" ]]; then
+  die "selected package attribute '$locked_packages_attr' does not match locked LLVM version '$locked_version'"
+fi
 
 qualifying=false
-if [[ $locked_version != "$candidate_version" && $locked_major == "23" && $candidate_major == "23" ]]; then
+if [[ $locked_version != "$candidate_version" && $candidate_major -ge $locked_major ]]; then
   qualifying=true
 fi
 
 write_output locked_revision "$locked_revision"
 write_output locked_version "$locked_version"
+write_output locked_packages_attr "$locked_packages_attr"
 write_output candidate_revision "$candidate_revision"
 write_output candidate_version "$candidate_version"
+write_output candidate_packages_attr "$candidate_packages_attr"
+write_output major_update "$([[ $candidate_major -gt $locked_major ]] && echo true || echo false)"
 write_output qualifying "$qualifying"

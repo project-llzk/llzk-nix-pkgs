@@ -38,9 +38,12 @@ Before enabling the workflow, repository administrators must:
 
 The privileged workflow is defined on `main` and accepts only an in-repository
 `bot/bump-llvm` PR created by `nix-pkgs-llvm-update-bot[bot]`.  It rechecks the
-PR head before checkout and rejects candidates whose merge-base diff is not
-exactly `flake.lock`.  Public and fork PRs therefore cannot schedule work on
-the EC2 runner or access Cachix publishing credentials.
+PR head before checkout and rejects candidates whose merge-base diff contains
+anything other than `flake.lock` and, for a major LLVM update, `flake.nix`.
+Same-major updates change only the lock file; major updates also select the
+corresponding `llvmPackages_N` attribute in `flake.nix`. Public and fork PRs
+therefore cannot schedule work on the EC2 runner or access Cachix publishing
+credentials.
 
 When that trusted LLVM PR is merged, `Bump llzk-lib flake input` creates or
 updates the `bot/bump-llzk-pkgs` PR in `project-llzk/llzk-lib`.  It updates only

@@ -7,7 +7,7 @@ name: Build LLVM update candidate
 on:
   pull_request_target:
     branches: [main]
-    paths: [flake.lock]
+    paths: [flake.lock, flake.nix]
     types: [opened, synchronize]
 
 permissions:
@@ -80,8 +80,21 @@ jobs:
           set -euo pipefail
 
           [[ $(git rev-parse HEAD) == "$EVENT_SHA" ]]
-          changed_paths=$(git diff --name-only "origin/$BASE_REF...HEAD")
-          [[ $changed_paths == "flake.lock" ]]
+          mapfile -t changed_paths < <(git diff --name-only "origin/$BASE_REF...HEAD")
+          [[ ${#changed_paths[@]} -ge 1 && ${#changed_paths[@]} -le 2 ]]
+
+          has_lock=false
+          for changed_path in "${changed_paths[@]}"; do
+            case "$changed_path" in
+              flake.lock) has_lock=true ;;
+              flake.nix) ;;
+              *)
+                echo "Untrusted candidate changes '$changed_path'." >&2
+                exit 1
+                ;;
+            esac
+          done
+          [[ $has_lock == true ]]
 
       - name: Install Nix
         if: steps.candidate.outputs.eligible == 'true'

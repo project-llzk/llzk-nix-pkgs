@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# Compare the LLVM version selected by this flake's locked nixpkgs input with
+# the current nixpkgs-unstable revision.  The script only evaluates inputs; it
+# never changes flake.lock.
+#
+# When run by GitHub Actions, the result is written to GITHUB_OUTPUT.  It also
+# prints the values for local use.
+
+set -euo pipefail
+
+llvm_packages_attr="llvmPackages_23"
+nixpkgs_owner="NixOS"
+nixpkgs_repo="nixpkgs"
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+write_output() {
+  local key=$1 value=$2
+  if [[ -n ${GITHUB_OUTPUT:-} ]]; then
+    printf '%s=%s\n' "$key" "$value" >> "$GITHUB_OUTPUT"
+  fi
+  printf '%s=%s\n' "$key" "$value"
+}
+
+llvm_version_at() {
+  local revision=$1
+  nix eval --raw \
+    "github:${nixpkgs_owner}/${nixpkgs_repo}/${revision}#${llvm_packages_attr}.llvm.version"
+}
+
+major_version() {
+  local version=$1
+  if [[ $version =~ ^([0-9]+)([.-]|$) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  else
+    die "could not determine LLVM major version from '$version'"
+  fi
+}
+
+[[ -f flake.lock ]] || die "run this script from the repository root"
+command -v jq >/dev/null || die "jq is required"
+
+locked_revision=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock) || die "flake.lock has no locked nixpkgs revision"
+candidate_revision=$(nix flake metadata --json --refresh \
+  "github:${nixpkgs_owner}/${nixpkgs_repo}/nixpkgs-unstable" | jq -er '.locked.rev')
+
+locked_version=$(llvm_version_at "$locked_revision")
+candidate_version=$(llvm_version_at "$candidate_revision")
+locked_major=$(major_version "$locked_version")
+candidate_major=$(major_version "$candidate_version")
+
+qualifying=false
+if [[ $locked_version != "$candidate_version" && $locked_major == "23" && $candidate_major == "23" ]]; then
+  qualifying=true
+fi
+
+write_output locked_revision "$locked_revision"
+write_output locked_version "$locked_version"
+write_output candidate_revision "$candidate_revision"
+write_output candidate_version "$candidate_version"
+write_output qualifying "$qualifying"

@@ -1,0 +1,133 @@
+name: Detect LLVM update
+
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: detect-llvm-update
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.35.2/install
+          github_access_token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Find existing LLVM update PR
+        id: existing-pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr_number=$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --base main \
+            --head bot/bump-llvm \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+
+      - name: Check out candidate branch
+        env:
+          PR_NUMBER: ${{ steps.existing-pr.outputs.number }}
+        run: |
+          if [[ -n $PR_NUMBER ]]; then
+            git fetch origin bot/bump-llvm
+            git checkout -B bot/bump-llvm origin/bot/bump-llvm
+          else
+            git checkout -B bot/bump-llvm origin/main
+          fi
+
+      - name: Detect qualifying LLVM update
+        id: detect
+        run: scripts/detect-llvm-update
+
+      - name: Update the Nixpkgs lock
+        id: update
+        if: steps.detect.outputs.qualifying == 'true'
+        env:
+          LOCKED_VERSION: ${{ steps.detect.outputs.locked_version }}
+        run: |
+          nix flake update nixpkgs
+
+          updated_revision=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)
+          updated_version=$(nix eval --raw \
+            "github:NixOS/nixpkgs/$updated_revision#llvmPackages_23.llvm.version")
+          updated_major=${updated_version%%[.-]*}
+
+          # nixpkgs-unstable can advance between detection and locking.  Do
+          # not turn that race into an accidental major-version PR.
+          if [[ $updated_version == "$LOCKED_VERSION" || $updated_major != "23" ]]; then
+            echo "The resolved lock no longer represents a qualifying LLVM 23 update."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git diff --quiet -- flake.lock; then
+            echo "nixpkgs lock did not change."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add flake.lock
+          git commit -m "chore: bump LLVM to $updated_version"
+          {
+            echo "revision=$updated_revision"
+            echo "version=$updated_version"
+            echo "changed=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Push candidate branch
+        if: steps.update.outputs.changed == 'true'
+        run: git push --force-with-lease origin HEAD:bot/bump-llvm
+
+      - name: Create or update LLVM update PR
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.existing-pr.outputs.number }}
+          OLD_VERSION: ${{ steps.detect.outputs.locked_version }}
+          OLD_REVISION: ${{ steps.detect.outputs.locked_revision }}
+          NEW_VERSION: ${{ steps.update.outputs.version }}
+          NEW_REVISION: ${{ steps.update.outputs.revision }}
+        run: |
+          title="chore: bump LLVM to $NEW_VERSION"
+          body=$(cat <<EOF
+          Automated same-major LLVM update.
+
+          - LLVM: \`$OLD_VERSION\` → \`$NEW_VERSION\`
+          - nixpkgs: \`$OLD_REVISION\` → \`$NEW_REVISION\`
+          - Detection workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          This PR does not upgrade the LLVM major version and must be merged manually.
+          EOF
+          )
+
+          if [[ -n $PR_NUMBER ]]; then
+            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          else
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base main \
+              --head bot/bump-llvm \
+              --title "$title" \
+              --body "$body"
+          fi

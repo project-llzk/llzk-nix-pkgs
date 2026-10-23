@@ -1,10 +1,22 @@
 diff --git a/include/llvm/ADT/Hashing.h b/include/llvm/ADT/Hashing.h
+index 6b765bc289ab..87048ba257e7 100644
 --- a/include/llvm/ADT/Hashing.h
 +++ b/include/llvm/ADT/Hashing.h
-@@ -217,6 +217,6 @@ template <typename InputIteratorT>
- hash_code hash_combine_range_impl(InputIteratorT first, InputIteratorT last) {
--  alignas(uint64_t) char stack_buf[256];
-+  alignas(uint64_t) char stack_buf[256] = {};
-   std::unique_ptr<char[]> heap_buf;
-   char *buf = stack_buf;
-   size_t cap = sizeof(stack_buf);
+@@ -241,7 +241,17 @@ hash_code hash_combine_range_impl(InputIteratorT first, InputIteratorT last) {
+     std::memcpy(buf + len, &data, sizeof(data));
+     len += sizeof(data);
+   }
++  // GCC may warn about stack_buf being uninitialized for an empty range. The
++  // loop initializes all len bytes before hashing, and xxh3_64bits does not
++  // read the buffer when len is zero.
++#if defined(__GNUC__) && !defined(__clang__)
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
++#endif
+   return combine_bytes(buf, len);
++#if defined(__GNUC__) && !defined(__clang__)
++#pragma GCC diagnostic pop
++#endif
+ }
+ 
+ /// Implement the combining of integral values into a hash_code.

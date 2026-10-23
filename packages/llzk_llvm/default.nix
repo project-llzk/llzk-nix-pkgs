@@ -33,7 +33,7 @@ let
           patches = attrs.patches ++ [
             # Pending https://github.com/llvm/llvm-project/commit/1d3ea0f50c4bcfababe7929c913df500723dcf2f
             ./initialize-hashing-buffer.patch
-            # Locally initialize the on-stack hashing buffer for GCC (like above but no upstream fix)
+            # Suppress GCC's false-positive warning about the on-stack hashing buffer
             ./initialize-hashing-stack-buffer.patch
           ];
           # Skip tests since they take a long time to build and run

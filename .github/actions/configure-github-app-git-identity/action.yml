@@ -8,6 +8,10 @@ inputs:
   token:
     description: Token permitted to look up the bot account.
     required: true
+  repository-path:
+    description: Path to the Git repository whose local author identity should be configured.
+    required: false
+    default: .
 
 outputs:
   bot-id:
@@ -22,9 +26,10 @@ runs:
       env:
         BOT_NAME: ${{ inputs.bot-name }}
         GH_TOKEN: ${{ inputs.token }}
+        REPOSITORY_PATH: ${{ inputs.repository-path }}
       run: |
         set -euo pipefail
         bot_id=$(gh api "/users/$BOT_NAME" --jq '.id')
-        git config user.name "$BOT_NAME"
-        git config user.email "$bot_id+$BOT_NAME@users.noreply.github.com"
+        git -C "$REPOSITORY_PATH" config user.name "$BOT_NAME"
+        git -C "$REPOSITORY_PATH" config user.email "$bot_id+$BOT_NAME@users.noreply.github.com"
         echo "bot-id=$bot_id" >> "$GITHUB_OUTPUT"

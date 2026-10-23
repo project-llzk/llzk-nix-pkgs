@@ -20,10 +20,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: ./.github/actions/configure-github-app-git-identity
-      with:
-        bot-name: ${{ format('{0}[bot]', inputs.bot-slug) }}
-        token: ${{ inputs.token }}
     - id: existing-pr
       uses: ./.github/actions/find-open-pull-request
       with:
@@ -38,6 +34,11 @@ runs:
         ref: main
         path: llzk-lib
         fetch-depth: 0
+    - uses: ./.github/actions/configure-github-app-git-identity
+      with:
+        bot-name: ${{ format('{0}[bot]', inputs.bot-slug) }}
+        token: ${{ inputs.token }}
+        repository-path: llzk-lib
     - uses: ./.github/actions/setup-nix-github-auth
       with:
         github-access-token: ${{ inputs.token }}

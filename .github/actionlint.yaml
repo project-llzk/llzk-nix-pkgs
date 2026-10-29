@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # The dedicated LLVM builder is documented in README.md.
+  labels:
+    - llzk-llvm-builder

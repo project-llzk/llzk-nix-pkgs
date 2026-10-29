@@ -1,0 +1,55 @@
+name: Trigger cached LLVM CI
+description: Safely append the empty commit that starts CI after a Cachix upload.
+
+inputs:
+  branch:
+    description: Candidate branch to update after the Cachix upload.
+    required: false
+    default: bot/bump-llvm
+  bot-name:
+    description: GitHub App bot login used to author the trigger commit.
+    required: false
+    default: nix-pkgs-llvm-update-bot[bot]
+  token:
+    required: true
+  pr-number:
+    required: true
+  event-sha:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: candidate
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        EVENT_SHA: ${{ inputs.event-sha }}
+      run: |
+        set -euo pipefail
+        current_head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.head.sha')
+        if [[ $current_head != "$EVENT_SHA" || $(git rev-parse HEAD) != "$EVENT_SHA" ]]; then
+          echo 'Candidate was superseded while it was building; cached CI will run for the newer candidate.'
+          echo 'current=false' >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo 'current=true' >> "$GITHUB_OUTPUT"
+    - if: steps.candidate.outputs.current == 'true'
+      uses: ./.github/actions/configure-github-app-git-identity
+      with:
+        bot-name: ${{ inputs.bot-name }}
+        token: ${{ inputs.token }}
+    - if: steps.candidate.outputs.current == 'true'
+      shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+        GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        set -euo pipefail
+        git commit --allow-empty --only -m 'chore: trigger CI after Cachix build'
+        git push origin "HEAD:$BRANCH"
+        if ! gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body '✅ All LLVM variants passed and were uploaded to Cachix; pushed an empty commit to trigger cached CI.'; then
+          echo 'WARNING: cached-CI status comment could not be posted.' >&2
+        fi

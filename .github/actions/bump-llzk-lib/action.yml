@@ -1,0 +1,99 @@
+name: Bump llzk-lib input
+description: Refresh llzk-lib's llzk-pkgs input and create or update its reviewable pull request.
+
+inputs:
+  branch:
+    description: Downstream branch used for the llzk-pkgs update pull request.
+    required: false
+    default: bot/bump-llzk-pkgs
+  token:
+    description: GitHub App installation token for project-llzk/llzk-lib.
+    required: true
+  bot-slug:
+    description: Slug of the GitHub App which owns the downstream branch.
+    required: true
+  upstream-pr:
+    required: true
+  upstream-revision:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: existing-pr
+      uses: ./.github/actions/find-open-pull-request
+      with:
+        base-branch: main
+        head-branch: ${{ inputs.branch }}
+        repository: project-llzk/llzk-lib
+        token: ${{ inputs.token }}
+    - uses: actions/checkout@v6
+      with:
+        repository: project-llzk/llzk-lib
+        token: ${{ inputs.token }}
+        ref: main
+        path: llzk-lib
+        fetch-depth: 0
+    - uses: ./.github/actions/configure-github-app-git-identity
+      with:
+        bot-name: ${{ format('{0}[bot]', inputs.bot-slug) }}
+        token: ${{ inputs.token }}
+        repository-path: llzk-lib
+    - uses: ./.github/actions/setup-nix-github-auth
+      with:
+        github-access-token: ${{ inputs.token }}
+    - shell: bash
+      working-directory: llzk-lib
+      env:
+        BRANCH: ${{ inputs.branch }}
+      run: |
+        set -euo pipefail
+        if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+          git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH"
+        fi
+        git checkout -B "$BRANCH" origin/main
+    - id: update
+      shell: bash
+      working-directory: llzk-lib
+      run: |
+        set -euo pipefail
+        nix flake update llzk-pkgs
+        if git diff --quiet -- flake.lock; then
+          echo 'changed=false' >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo 'changed=true' >> "$GITHUB_OUTPUT"
+        echo "llzk_pkgs_revision=$(jq -er '.nodes[\"llzk-pkgs\"].locked.rev' flake.lock)" >> "$GITHUB_OUTPUT"
+        echo "nixpkgs_revision=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)" >> "$GITHUB_OUTPUT"
+    - if: steps.update.outputs.changed == 'true'
+      shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+        GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ steps.existing-pr.outputs.number }}
+        UPSTREAM_PR: ${{ inputs.upstream-pr }}
+        UPSTREAM_REVISION: ${{ inputs.upstream-revision }}
+        LLZK_PKGS_REVISION: ${{ steps.update.outputs.llzk_pkgs_revision }}
+        NIXPKGS_REVISION: ${{ steps.update.outputs.nixpkgs_revision }}
+      run: |
+        set -euo pipefail
+        git -C llzk-lib add flake.lock
+        git -C llzk-lib commit -m "chore: bump llzk-pkgs flake input to $LLZK_PKGS_REVISION"
+        git -C llzk-lib push --force-with-lease origin "HEAD:$BRANCH"
+        title="chore: bump llzk-pkgs flake input to $LLZK_PKGS_REVISION"
+        body=$(cat <<EOF
+        Automated flake input update after project-llzk/llzk-nix-pkgs#$UPSTREAM_PR merged.
+
+        - Merged upstream revision: \`$UPSTREAM_REVISION\`
+        - Resolved llzk-pkgs revision: \`$LLZK_PKGS_REVISION\`
+        - Resolved nixpkgs revision: \`$NIXPKGS_REVISION\`
+        - Source workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+        This PR must be reviewed and merged manually. It does not enable auto-merge.
+        EOF
+        )
+        if [[ -n $PR_NUMBER ]]; then
+          gh pr edit "$PR_NUMBER" --repo project-llzk/llzk-lib --title "$title" --body "$body"
+        else
+          gh pr create --repo project-llzk/llzk-lib --base main --head "$BRANCH" --title "$title" --body "$body"
+        fi

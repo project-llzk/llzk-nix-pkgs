@@ -1,0 +1,83 @@
+name: Detect LLVM update
+
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: detect-llvm-update
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    environment: llvm-update-automation
+    steps:
+      - name: Create LLVM update bot token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.NIX_PKGS_LLVM_UPDATE_APP_ID }}
+          private-key: ${{ secrets.NIX_PKGS_LLVM_UPDATE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Check out main
+        uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          ref: main
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: ./.github/actions/setup-nix-github-auth
+        with:
+          github-access-token: ${{ steps.app-token.outputs.token }}
+
+      - name: Find existing LLVM update PR
+        id: existing-pr
+        uses: ./.github/actions/find-open-pull-request
+        with:
+          base-branch: main
+          head-branch: bot/bump-llvm
+          repository: ${{ github.repository }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Check out candidate branch
+        uses: ./.github/actions/checkout-llvm-candidate
+        with:
+          pr-number: ${{ steps.existing-pr.outputs.number }}
+
+      - name: Detect qualifying LLVM update
+        id: detect
+        run: scripts/detect-llvm-update
+
+      - name: Update the Nixpkgs lock
+        id: update
+        if: steps.detect.outputs.qualifying == 'true'
+        uses: ./.github/actions/update-llvm-lock
+        with:
+          locked-version: ${{ steps.detect.outputs.locked_version }}
+          locked-packages-attr: ${{ steps.detect.outputs.locked_packages_attr }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Push candidate branch
+        if: steps.update.outputs.changed == 'true'
+        run: git push --force-with-lease origin HEAD:bot/bump-llvm
+
+      - name: Create or update LLVM update PR
+        if: steps.update.outputs.changed == 'true'
+        uses: ./.github/actions/upsert-llvm-update-pr
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          pr-number: ${{ steps.existing-pr.outputs.number }}
+          old-version: ${{ steps.detect.outputs.locked_version }}
+          old-revision: ${{ steps.detect.outputs.locked_revision }}
+          new-version: ${{ steps.update.outputs.version }}
+          new-revision: ${{ steps.update.outputs.revision }}
+          new-packages-attr: ${{ steps.update.outputs.packages-attr }}
+          major-update: ${{ steps.update.outputs.major-update }}

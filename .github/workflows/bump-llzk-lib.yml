@@ -1,0 +1,52 @@
+name: Bump llzk-lib flake input
+
+# This workflow runs from main after the trusted LLVM-update PR is merged.  It
+# never checks out or executes the merged PR's contents.
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-llzk-lib
+  # Queue merges so every run can refresh the one downstream PR to the newest
+  # upstream revision without concurrent writes to its bot branch.
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'bot/bump-llvm' &&
+      github.event.pull_request.user.login == 'nix-pkgs-llvm-update-bot[bot]'
+    runs-on: ubuntu-24.04
+    environment: llzk-lib-update-automation
+    steps:
+      - name: Check out trusted workflow actions
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Create llzk-lib update token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.LLZK_LIB_UPDATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LLZK_LIB_UPDATE_APP_PRIVATE_KEY }}
+          owner: project-llzk
+          repositories: llzk-lib
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Bump llzk-lib input and maintain its PR
+        uses: ./.github/actions/bump-llzk-lib
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          bot-slug: ${{ steps.app-token.outputs.app-slug }}
+          upstream-pr: ${{ github.event.pull_request.number }}
+          upstream-revision: ${{ github.sha }}

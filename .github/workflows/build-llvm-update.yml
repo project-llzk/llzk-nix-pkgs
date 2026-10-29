@@ -28,7 +28,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref == 'bot/bump-llvm' &&
       github.actor == 'nix-pkgs-llvm-update-bot[bot]'
-    runs-on: [self-hosted, linux, x64, llzk-llvm-builder]
+    runs-on: dev-llzk
     environment: llvm-cache-publisher
     timeout-minutes: 720
     outputs:

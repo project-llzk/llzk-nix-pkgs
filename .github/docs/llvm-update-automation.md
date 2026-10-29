@@ -2,12 +2,9 @@
 # LLVM update builder
 
 LLVM update candidates are built only by the `Build LLVM update candidate`
-workflow.  It runs on the dedicated EC2 runner with all of these labels:
-`self-hosted`, `linux`, `x64`, and `llzk-llvm-builder`.  The runner must be
-available only to this repository and have `bash`, `git`, `gh`, Nix compatible
-with this flake, the Cachix client, and sufficient CPU, memory, and disk for
-the LLVM builds.  Treat its workspace as sensitive: clean it between jobs or
-use an ephemeral/reimaged runner.
+workflow. It runs on the self-hosted runner labeled `dev-llzk`. The runner
+must be available only to this repository. Treat its workspace as sensitive:
+clean it between jobs or use an ephemeral/reimaged runner.
 
 Before enabling the workflow, repository administrators must:
 
@@ -37,7 +34,7 @@ PR head before checkout and rejects candidates whose merge-base diff contains
 anything other than `flake.lock` and, for a major LLVM update, `flake.nix`.
 Same-major updates change only the lock file; major updates also select the
 corresponding `llvmPackages_N` attribute in `flake.nix`. Public and fork PRs
-therefore cannot schedule work on the EC2 runner or access Cachix publishing
+therefore cannot schedule work on the self-hosted runner or access Cachix publishing
 credentials.
 
 When that trusted LLVM PR is merged, `Bump llzk-lib flake input` creates or

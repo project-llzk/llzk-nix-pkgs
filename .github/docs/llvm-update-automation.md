@@ -14,8 +14,17 @@ Before enabling the workflow, repository administrators must:
   `Issues` read/write access, and must be installed only on this repository.
 - Create the protected `llvm-update-automation` environment with
   `NIX_PKGS_LLVM_UPDATE_APP_PRIVATE_KEY` and the
-  `NIX_PKGS_LLVM_UPDATE_APP_ID` configuration variable.  The private
-  key is used only to mint short-lived installation tokens for the update bot.
+  `NIX_PKGS_LLVM_UPDATE_APP_CLIENT_ID` configuration variable.  The variable
+  must contain the GitHub App's client ID, not its numeric App ID. The private
+  key must be the matching, unaltered PEM key; it is used only to mint
+  short-lived installation tokens for the update bot. Use
+  `scripts/verify-github-app-auth` to validate these credentials locally.
+
+  ```sh
+  GITHUB_APP_CLIENT_ID='Iv…' \
+  GITHUB_APP_PRIVATE_KEY="$(< /secure/path/to/github-app-private-key.pem)" \
+    scripts/verify-github-app-auth
+  ```
 - Create the protected `llvm-cache-publisher` environment and store the Cachix
   write token there as `CACHIX_PUBLIC_TOKEN`; only the privileged builder job
   may use that environment.

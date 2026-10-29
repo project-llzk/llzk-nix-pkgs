@@ -36,7 +36,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.LLZK_LIB_UPDATE_APP_CLIENT_ID }}
+          client-id: ${{ vars.LLZK_LIB_UPDATE_APP_CLIENT_ID }}
           private-key: ${{ secrets.LLZK_LIB_UPDATE_APP_PRIVATE_KEY }}
           owner: project-llzk
           repositories: llzk-lib

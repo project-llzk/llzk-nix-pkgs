@@ -1,0 +1,49 @@
+name: Create or update LLVM update PR
+description: Create or refresh the LLVM update pull request with its provenance.
+
+inputs:
+  branch:
+    description: Candidate branch used as the pull request head.
+    required: false
+    default: bot/bump-llvm
+  token: { required: true }
+  pr-number: { required: false }
+  old-version: { required: true }
+  old-revision: { required: true }
+  new-version: { required: true }
+  new-revision: { required: true }
+  new-packages-attr: { required: true }
+  major-update: { required: true }
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+        GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        OLD_VERSION: ${{ inputs.old-version }}
+        OLD_REVISION: ${{ inputs.old-revision }}
+        NEW_VERSION: ${{ inputs.new-version }}
+        NEW_REVISION: ${{ inputs.new-revision }}
+        NEW_PACKAGES_ATTR: ${{ inputs.new-packages-attr }}
+        MAJOR_UPDATE: ${{ inputs.major-update }}
+      run: |
+        title="chore: bump LLVM to $NEW_VERSION"
+        body=$(cat <<EOF
+        Automated LLVM update.
+
+        - LLVM: \`$OLD_VERSION\` → \`$NEW_VERSION\`
+        - nixpkgs: \`$OLD_REVISION\` → \`$NEW_REVISION\`
+        - LLVM package set: \`$NEW_PACKAGES_ATTR\`
+        - Detection workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+        This is a $([[ $MAJOR_UPDATE == true ]] && echo major-version || echo same-major) LLVM update and must be merged manually.
+        EOF
+        )
+        if [[ -n $PR_NUMBER ]]; then
+          gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+        else
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$title" --body "$body"
+        fi

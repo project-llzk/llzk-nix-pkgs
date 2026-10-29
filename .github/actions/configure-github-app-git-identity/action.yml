@@ -1,0 +1,35 @@
+name: Configure GitHub App Git identity
+description: Configure Git to author commits using a GitHub App bot's canonical noreply address.
+
+inputs:
+  bot-name:
+    description: GitHub App bot login, including the [bot] suffix.
+    required: true
+  token:
+    description: Token permitted to look up the bot account.
+    required: true
+  repository-path:
+    description: Path to the Git repository whose local author identity should be configured.
+    required: false
+    default: .
+
+outputs:
+  bot-id:
+    description: Numeric GitHub account ID for the bot.
+    value: ${{ steps.configure.outputs.bot-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: configure
+      shell: bash
+      env:
+        BOT_NAME: ${{ inputs.bot-name }}
+        GH_TOKEN: ${{ inputs.token }}
+        REPOSITORY_PATH: ${{ inputs.repository-path }}
+      run: |
+        set -euo pipefail
+        bot_id=$(gh api "/users/$BOT_NAME" --jq '.id')
+        git -C "$REPOSITORY_PATH" config user.name "$BOT_NAME"
+        git -C "$REPOSITORY_PATH" config user.email "$bot_id+$BOT_NAME@users.noreply.github.com"
+        echo "bot-id=$bot_id" >> "$GITHUB_OUTPUT"

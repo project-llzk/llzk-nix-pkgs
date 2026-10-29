@@ -1,0 +1,123 @@
+name: Build LLVM update candidate
+
+# This workflow deliberately uses pull_request_target so its definition comes
+# from main, not from the candidate branch.  It only executes a branch that is
+# owned and updated by the trusted update automation; see
+# .github/docs/llvm-update-automation.md for the
+# required ruleset.
+on:
+  pull_request_target:
+    branches: [main]
+    paths: [flake.lock, flake.nix]
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: build-llvm-update-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    # A fork cannot satisfy head.repo.full_name.  The bot branch is protected
+    # so its contents are produced only by Detect LLVM update.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'bot/bump-llvm' &&
+      github.actor == 'nix-pkgs-llvm-update-bot[bot]'
+    runs-on: dev-llzk
+    environment: llvm-cache-publisher
+    timeout-minutes: 720
+    outputs:
+      candidate-eligible: ${{ steps.candidate.outputs.eligible }}
+    steps:
+      # Local actions must be checked out before use. Keep this on main until
+      # the candidate has passed the validation below.
+      - name: Check out trusted workflow actions
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Confirm this is the current trusted candidate
+        id: candidate
+        uses: ./.github/actions/confirm-llvm-candidate
+        with:
+          token: ${{ github.token }}
+          pr-number: ${{ github.event.pull_request.number }}
+          event-sha: ${{ github.event.pull_request.head.sha }}
+
+      - name: Check out candidate
+        if: steps.candidate.outputs.eligible == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: bot/bump-llvm
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify checked-out candidate
+        if: steps.candidate.outputs.eligible == 'true'
+        uses: ./.github/actions/verify-llvm-candidate
+        with:
+          base-ref: ${{ github.event.pull_request.base.ref }}
+          event-sha: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Nix
+        if: steps.candidate.outputs.eligible == 'true'
+        uses: ./.github/actions/setup-nix-github-auth
+        with:
+          github-access-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Cachix publishing
+        if: steps.candidate.outputs.eligible == 'true'
+        uses: cachix/cachix-action@v17
+        with:
+          name: veridise-public
+          authToken: "${{ secrets.CACHIX_PUBLIC_TOKEN }}"
+
+      - name: Build and publish
+        if: steps.candidate.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/build-and-push-cachix --no-trigger-ci
+
+  # Keep the GitHub App key outside the privileged, long-running build job.
+  # This job does not execute candidate code before it validates the PR head.
+  trigger-cached-ci:
+    needs: build-and-publish
+    if: >-
+      needs.build-and-publish.result == 'success' &&
+      needs.build-and-publish.outputs.candidate-eligible == 'true'
+    runs-on: ubuntu-24.04
+    environment: llvm-update-automation
+    permissions:
+      contents: read
+    steps:
+      # Installation tokens expire after one hour. Creating this token only
+      # after the long build keeps it valid for the branch update below.
+      - name: Create LLVM update bot token for cached CI
+        id: ci-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.NIX_PKGS_LLVM_UPDATE_APP_ID }}
+          private-key: ${{ secrets.NIX_PKGS_LLVM_UPDATE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: read
+          permission-issues: write
+
+      - name: Check out current candidate with bot credentials
+        uses: actions/checkout@v6
+        with:
+          token: ${{ steps.ci-token.outputs.token }}
+          ref: bot/bump-llvm
+          fetch-depth: 0
+
+      - name: Trigger cached CI
+        uses: ./.github/actions/trigger-cached-llvm-ci
+        with:
+          token: ${{ steps.ci-token.outputs.token }}
+          pr-number: ${{ github.event.pull_request.number }}
+          event-sha: ${{ github.event.pull_request.head.sha }}

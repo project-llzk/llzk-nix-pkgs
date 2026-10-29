@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # The self-hosted LLVM builder is documented in .github/docs/llvm-update-automation.md.
+  labels:
+    - dev-llzk

@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+#
+# Verify that a GitHub App client ID and private key can mint an installation
+# token for the LLVM update repository. The token is revoked before exit.
+#
+# Required environment variables:
+#   GITHUB_APP_CLIENT_ID     GitHub App client ID
+#   GITHUB_APP_PRIVATE_KEY   Matching PEM private key (including newlines)
+#
+# Optional environment variables:
+#   GITHUB_APP_REPOSITORY    Owner/repository to verify
+#                            (default: project-llzk/llzk-nix-pkgs)
+#   GITHUB_API_URL           GitHub REST API base URL
+#                            (default: https://api.github.com)
+
+set -euo pipefail
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+for command in curl jq openssl date mktemp; do
+  require_command "$command"
+done
+
+: "${GITHUB_APP_CLIENT_ID:?set GITHUB_APP_CLIENT_ID to the GitHub App client ID}"
+: "${GITHUB_APP_PRIVATE_KEY:?set GITHUB_APP_PRIVATE_KEY to the matching PEM private key}"
+
+repository=${GITHUB_APP_REPOSITORY:-project-llzk/llzk-nix-pkgs}
+api_url=${GITHUB_API_URL:-https://api.github.com}
+
+[[ $repository == */* && $repository != */ && $repository != /* ]] || \
+  die "GITHUB_APP_REPOSITORY must be in owner/repository form"
+
+temporary_directory=$(mktemp -d)
+private_key_file="$temporary_directory/private-key.pem"
+installation_token=""
+
+cleanup() {
+  local status=$?
+
+  trap - EXIT
+  if [[ -n $installation_token ]]; then
+    if ! curl --fail-with-body --silent --show-error --request DELETE \
+      --header "Accept: application/vnd.github+json" \
+      --header "Authorization: Bearer $installation_token" \
+      --header "X-GitHub-Api-Version: 2022-11-28" \
+      "$api_url/installation/token" >/dev/null; then
+      echo "warning: could not revoke the temporary installation token" >&2
+    fi
+  fi
+  rm -f "$private_key_file"
+  rmdir "$temporary_directory" 2>/dev/null || true
+  exit "$status"
+}
+trap cleanup EXIT
+
+printf '%s\n' "$GITHUB_APP_PRIVATE_KEY" > "$private_key_file"
+chmod 600 "$private_key_file"
+
+base64url() {
+  openssl base64 -A | tr '+/' '-_' | tr -d '='
+}
+
+github_api() {
+  curl --fail-with-body --silent --show-error \
+    --header "Accept: application/vnd.github+json" \
+    --header "X-GitHub-Api-Version: 2022-11-28" \
+    "$@"
+}
+
+issued_at=$(date +%s)
+expires_at=$((issued_at + 540))
+header=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | base64url)
+payload=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$issued_at" "$expires_at" "$GITHUB_APP_CLIENT_ID" | base64url)
+unsigned_jwt="$header.$payload"
+signature=$(printf '%s' "$unsigned_jwt" | openssl dgst -sha256 -sign "$private_key_file" -binary | base64url)
+app_jwt="$unsigned_jwt.$signature"
+
+app=$(github_api --header "Authorization: Bearer $app_jwt" "$api_url/app")
+app_slug=$(jq -er '.slug' <<<"$app")
+app_id=$(jq -er '.id' <<<"$app")
+
+installation=$(github_api --header "Authorization: Bearer $app_jwt" "$api_url/repos/$repository/installation")
+installation_id=$(jq -er '.id' <<<"$installation")
+
+token_response=$(github_api --request POST \
+  --header "Authorization: Bearer $app_jwt" \
+  --header "Content-Type: application/json" \
+  --data '{"permissions":{"contents":"write","pull_requests":"write"}}' \
+  "$api_url/app/installations/$installation_id/access_tokens")
+installation_token=$(jq -er '.token' <<<"$token_response")
+
+verified_repository=$(github_api \
+  --header "Authorization: Bearer $installation_token" \
+  "$api_url/repos/$repository" | jq -er '.full_name')
+
+printf 'Authenticated GitHub App %s (ID %s); installation token can access %s.\n' \
+  "$app_slug" "$app_id" "$verified_repository"

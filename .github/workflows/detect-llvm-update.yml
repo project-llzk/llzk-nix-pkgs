@@ -2,7 +2,7 @@ name: Detect LLVM update
 
 on:
   schedule:
-    - cron: "0 16 * * *"
+    - cron: "41 06 * * *"
   workflow_dispatch:
 
 permissions:

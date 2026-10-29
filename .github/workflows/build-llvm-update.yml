@@ -2,7 +2,8 @@ name: Build LLVM update candidate
 
 # This workflow deliberately uses pull_request_target so its definition comes
 # from main, not from the candidate branch.  It only executes a branch that is
-# owned and updated by the trusted update automation; see README.md for the
+# owned and updated by the trusted update automation; see
+# .github/docs/llvm-update-automation.md for the
 # required ruleset.
 on:
   pull_request_target:

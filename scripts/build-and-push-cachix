@@ -102,19 +102,10 @@ update_comment() {
   fi
 }
 
-push_closure() {
-  local attr=$1 derivation
-
-  derivation=$(nix path-info --derivation ".#$attr") || return 1
-  # A derivation can have more than one output; xargs keeps each store path
-  # as its own nix-store argument instead of collapsing them into one string.
-  nix-store -q "$derivation" | xargs nix-store -qR | cachix push "$cache"
-}
-
 build_and_push() {
   local index=$1
-  local attr=${names[$index]} build_cores=${cores[$index]}
-  local -a build_command=(nix build)
+  local attr=${names[$index]} build_cores=${cores[$index]} output_paths
+  local -a build_command=(nix build --print-out-paths)
 
   results[$index]="$attr: building"
   update_comment
@@ -125,8 +116,10 @@ build_and_push() {
   else
     echo "==> Building .#$attr (no core limit)"
   fi
-  build_command+=(".#$attr")
-  if ! "${build_command[@]}"; then
+  # Request every output: substitution may otherwise fetch only the default
+  # output, leaving dev/lib/python paths absent from the local store.
+  build_command+=(".#$attr^*")
+  if ! output_paths=$("${build_command[@]}"); then
     echo "FAIL: .#$attr build failed; Cachix upload skipped." >&2
     results[$index]="$attr: build failed (upload skipped)"
     update_comment
@@ -136,13 +129,16 @@ build_and_push() {
   results[$index]="$attr: build passed; uploading"
   update_comment
   echo "==> Uploading .#$attr closure to $cache"
-  if ! push_closure "$attr"; then
+  # Cachix expands these realised outputs to their runtime closures and skips
+  # paths already present in the cache.
+  if ! printf '%s\n' "$output_paths" | cachix push "$cache"; then
     echo "FAIL: .#$attr upload failed." >&2
     results[$index]="$attr: build passed; upload failed"
     update_comment
     return
   fi
 
+  echo "OK: .#$attr closure uploaded or already cached in $cache."
   results[$index]="$attr: passed"
   update_comment
 }

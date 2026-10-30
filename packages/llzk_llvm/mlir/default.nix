@@ -21,7 +21,7 @@
 let
   pythonDeps = with python3.pkgs; [
     numpy
-    pybind11
+    nanobind
     pyyaml
   ];
 in
@@ -96,7 +96,6 @@ stdenv.mkDerivation rec {
     "-DMLIR_ENABLE_BINDINGS_PYTHON=ON"
     "-DMLIR_BUILD_MLIR_C_DYLIB=ON"
     "-DPython3_EXECUTABLE=${python3}/bin/python"
-    "-DPython3_NumPy_INCLUDE_DIR=${python3.pkgs.numpy}/${python3.sitePackages}/numpy/core/include"
     # ] ++ lib.optionals enableManpages [
     #   "-DCLANG_INCLUDE_DOCS=ON"
     #   "-DLLVM_ENABLE_SPHINX=ON"
@@ -139,8 +138,14 @@ stdenv.mkDerivation rec {
       mv $out/python_packages/mlir_core/mlir $python/${python3.sitePackages}/mlir
       echo 'mlir' > $python/${python3.sitePackages}/mlir_core.pth
 
-      # move Python bindings DSO to lib output, since they are searched for in there
-      mv $python/${python3.sitePackages}/mlir/_mlir_libs/libMLIRPythonCAPI${stdenv.hostPlatform.extensions.sharedLibrary} $lib/lib/
+      # Extensions link to the C API, MLIR Python support, and nanobind libraries in the lib output. Move
+      # all shared libraries and their versioned symlinks together, keeping the extension modules in Python.
+      for pythonLibrary in "$python/${python3.sitePackages}/mlir/_mlir_libs"/lib*${stdenv.hostPlatform.extensions.sharedLibrary}*; do
+        pythonLibraryName=$(basename "$pythonLibrary")
+        mv "$pythonLibrary" "$lib/lib/"
+        # Preserve every loader-relative name used by the installed extensions.
+        ln -s "$lib/lib/$pythonLibraryName" "$pythonLibrary"
+      done
     ''}
   '';
 
